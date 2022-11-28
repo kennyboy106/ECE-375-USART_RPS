@@ -168,62 +168,75 @@ MAIN:
 
 ;-----------------------------------------------------------
 ; Func:	
-; Desc:	Assumes Z already points to string.
+; Desc:	This is essentially the core function of the game.
+;		Game stages change as follows:
+;			0 -> 1		0 = IDLE
+;			1 -> 2		1 = READY UP
+;			2 -> 3		2 = SELECT HAND
+;			3 -> 4		3 = REVEAL HANDS
+;			4 -> 0		4 = RESULT
 ;-----------------------------------------------------------
-LCD_TEST:
+NEXT_GAME_STAGE:
 	; Save variables
 	push	mpr
-	push	ZH
-	push	ZL
+	push	XH
+	push	XL
 
-	; Test STRING_IDLE
-	ldi		ZH, high(STRING_IDLE<<1)	; Point Z to string
-	ldi		ZL, low(STRING_IDLE<<1)		; ^
-	call	LCD_ALL
+	; Branch based on current Game Stage
+	ldi		XH, high(GAME_STAGE)
+	ldi		XL, low(GAME_STAGE)
+	ld		mpr, X
 
-	; Wait
-	call	BUSY_WAIT
+	cpi		mpr, 0
+	breq	NEXT_GAME_STAGE_0
+	cpi		mpr, 1
+	breq	NEXT_GAME_STAGE_1
+	cpi		mpr, 2
+	breq	NEXT_GAME_STAGE_2
+	cpi		mpr, 3
+	breq	NEXT_GAME_STAGE_3
+	cpi		mpr, 4
+	breq	NEXT_GAME_STAGE_4
 
-	; Test STRING_READY
-	ldi		ZH, high(STRING_READY<<1)	; Point Z to string
-	ldi		ZL, low(STRING_READY<<1)	; ^
-	call	LCD_ALL
+NEXT_GAME_STAGE_0:
+	ldi		mpr, 1					; Update GAME_STAGE
+	st		X, mpr					; ^
+	ldi		mpr, (0<<INT6 | 0<<INT3 | 0<<INT2 | 0<<INT1 | 1<<INT0)	; Disable INT3 (PD7) because it's only use was to start the game
+	sts		EIMSK, mpr												; ^ INT1 (PD4) is still needed to change HAND_USER
+	rjmp	NEXT_GAME_STAGE_END
 
-	; Wait
-	call	BUSY_WAIT
+NEXT_GAME_STAGE_1:
+	ldi		mpr, 2					; Update GAME_STAGE
+	st		X, mpr					; ^
+	rjmp	NEXT_GAME_STAGE_END
+	
+NEXT_GAME_STAGE_2:
+	ldi		mpr, 3					; Update GAME_STAGE
+	st		X, mpr					; ^
 
-	; Test STRING_BEGIN
-	ldi		ZH, high(STRING_BEGIN<<1)	; Point Z to string
-	ldi		ZL, low(STRING_BEGIN<<1)	; ^
-	call	LCD_TOP
+	; Start 6s timer
 
-	; Test STRING_ROCK
-	ldi		ZH, high(STRING_ROCK<<1)	; Point Z to string
-	ldi		ZL, low(STRING_ROCK<<1)		; ^
-	call	LCD_BOTTOM
+	rjmp	NEXT_GAME_STAGE_END
 
-	; Wait
-	call	BUSY_WAIT
+NEXT_GAME_STAGE_3:
+	ldi		mpr, 4					; Update GAME_STAGE
+	st		X, mpr					; ^
 
-	; Test STRING_PAPER
-	ldi		ZH, high(STRING_PAPER<<1)	; Point Z to string
-	ldi		ZL, low(STRING_PAPER<<1)	; ^
-	call	LCD_BOTTOM
+	; Start 6s timer
 
-	; Wait
-	call	BUSY_WAIT
+	rjmp	NEXT_GAME_STAGE_END
 
-	; Test STRING_SCISSORS
-	ldi		ZH, high(STRING_SCISSORS<<1); Point Z to string
-	ldi		ZL, low(STRING_SCISSORS<<1)	; ^
-	call	LCD_BOTTOM
+NEXT_GAME_STAGE_4:
+	ldi		mpr, 0					; Update GAME_STAGE
+	st		X, mpr					; ^
+	ldi		mpr, (0<<INT6 | 1<<INT3 | 0<<INT2 | 0<<INT1 | 1<<INT0)	; Enable INT3 (PD7) so it can start the game again
+	sts		EIMSK, mpr												; ^
+	rjmp	NEXT_GAME_STAGE_END
 
-	; Wait
-	call	BUSY_WAIT
-
+NEXT_GAME_STAGE_END:
 	; Restore variables
-	pop		ZL
-	pop		ZH
+	pop		XL
+	pop		XH
 	pop		mpr
 
 	; Return from function
@@ -343,22 +356,6 @@ LCD_BOTTOM_LOOP:
 	push	mpr
 
 	; Func
-
-	; Restore variables
-	pop		mpr
-
-	; Return from function
-	ret
-	
-;-----------------------------------------------------------
-; Func:	
-; Desc:	
-;-----------------------------------------------------------
-;FUNC:
-	; Save variables
-	push	mpr
-
-	; Func
 	
 ;-----------------------------------------------------------
 ; Func:	
@@ -415,12 +412,12 @@ LCD_BOTTOM_LOOP:
 	ret
 
 ;----------------------------------------------------------------
-; Sub:  Wait
-; Desc: A wait loop that is 16 + 159975*waitcnt cycles or roughly
-;       mpr*10ms.  Just initialize wait for the specific amount
-;       of time in 10ms intervals. Here is the general eqaution
-;       for the number of clock cycles in the wait loop:
-;           ((3 * ilcnt + 3) * olcnt + 3) * mpr + 13 + call
+; Func:	BUSY_WAIT
+; Desc:	A wait loop that is 16 + 159975*waitcnt cycles or roughly
+;		mpr*10ms.  Just initialize wait for the specific amount
+;		of time in 10ms intervals. Here is the general eqaution
+;		for the number of clock cycles in the wait loop:
+;		((3 * ilcnt + 3) * olcnt + 3) * mpr + 13 + call
 ;----------------------------------------------------------------
 BUSY_WAIT:
 	; Save variables
@@ -448,6 +445,93 @@ BUSY_WAIT_ILOOP:
 
         ; Return from subroutine
         ret
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	Assumes Z already points to string.
+;-----------------------------------------------------------
+LCD_TEST:
+	; Save variables
+	push	mpr
+	push	ZH
+	push	ZL
+
+	; Test STRING_IDLE
+	ldi		ZH, high(STRING_IDLE<<1)	; Point Z to string
+	ldi		ZL, low(STRING_IDLE<<1)		; ^
+	call	LCD_ALL
+
+	; Wait
+	call	BUSY_WAIT
+
+	; Test STRING_READY
+	ldi		ZH, high(STRING_READY<<1)	; Point Z to string
+	ldi		ZL, low(STRING_READY<<1)	; ^
+	call	LCD_ALL
+
+	; Wait
+	call	BUSY_WAIT
+
+	; Test STRING_BEGIN
+	ldi		ZH, high(STRING_BEGIN<<1)	; Point Z to string
+	ldi		ZL, low(STRING_BEGIN<<1)	; ^
+	call	LCD_TOP
+
+	; Test STRING_ROCK
+	ldi		ZH, high(STRING_ROCK<<1)	; Point Z to string
+	ldi		ZL, low(STRING_ROCK<<1)		; ^
+	call	LCD_BOTTOM
+
+	; Wait
+	call	BUSY_WAIT
+
+	; Test STRING_PAPER
+	ldi		ZH, high(STRING_PAPER<<1)	; Point Z to string
+	ldi		ZL, low(STRING_PAPER<<1)	; ^
+	call	LCD_BOTTOM
+
+	; Wait
+	call	BUSY_WAIT
+
+	; Test STRING_SCISSORS
+	ldi		ZH, high(STRING_SCISSORS<<1); Point Z to string
+	ldi		ZL, low(STRING_SCISSORS<<1)	; ^
+	call	LCD_BOTTOM
+
+	; Wait
+	call	BUSY_WAIT
+
+	; Test STRING_WON
+	ldi		ZH, high(STRING_WON<<1); Point Z to string
+	ldi		ZL, low(STRING_WON<<1)	; ^
+	call	LCD_TOP
+
+	; Wait
+	call	BUSY_WAIT
+
+	; Test STRING_LOST
+	ldi		ZH, high(STRING_LOST<<1); Point Z to string
+	ldi		ZL, low(STRING_LOST<<1)	; ^
+	call	LCD_TOP
+
+	; Wait
+	call	BUSY_WAIT
+
+	; Test STRING_DRAW
+	ldi		ZH, high(STRING_DRAW<<1); Point Z to string
+	ldi		ZL, low(STRING_DRAW<<1)	; ^
+	call	LCD_TOP
+
+	; Wait
+	call	BUSY_WAIT
+
+	; Restore variables
+	pop		ZL
+	pop		ZH
+	pop		mpr
+
+	; Return from function
+	ret
 
 ;***********************************************************
 ;*	Stored Program Data
@@ -477,6 +561,8 @@ STRING_DRAW:
 .dseg
 .org	$0200		; Idk why this number, seems big enough
 
+GAME_STAGE:			; Indicates the current stage the game is in
+	.byte 1
 READY_USER:			; User ready
 	.byte 1
 READY_OPNT:			; Opponent ready
