@@ -42,11 +42,11 @@
 		reti
 
 .org	$0008					; INT3, PD7, start game
-		;rcall	
+		rcall	NEXT_GAME_STAGE	
 		reti
 
 .org	$0028					; Timer/Counter1 Overflow
-		;rcall	
+		rcall	TIMER	
 		reti
 
 .org	$0032					; USART1 RX Complete
@@ -88,13 +88,13 @@ INIT:
 
 	; Ready Flags
 	ldi		mpr, SIG_NOT_READY
-	ldi		ZH, high(READY_USER<<1)
-	ldi		ZL,	low(READY_USER<<1)
-	st		Z, mpr
+	ldi		XH, high(READY_USER)
+	ldi		XL,	low(READY_USER)
+	st		X, mpr
 	ldi		mpr, SIG_NOT_READY
-	ldi		ZH, high(READY_OPNT<<1)
-	ldi		ZL,	low(READY_OPNT<<1)
-	st		Z, mpr
+	ldi		XH, high(READY_OPNT)
+	ldi		XL,	low(READY_OPNT)
+	st		X, mpr
 
 	; USART1
 		; Frame Format
@@ -136,6 +136,17 @@ INIT:
 	sts		TCCR1B, mpr
 	ldi		mpr, $00		; Not important
 	sts		TCCR1C, mpr		; ^
+	
+		; Set starting value
+			; Value = Max + 1 - ( Delay * clk ) / Prescale = 18661 = $48E5
+				; Max	= $FFFF = 65535
+				; Delay = 1.5s
+				; clk	= 8MHz
+				; Prescale	= 256
+	ldi		mpr, $48		; Write to high byte first
+	sts		TCNT1H, mpr		; ^
+	ldi		mpr, $E5		; Write to low byte second
+	sts		TCNT1L, mpr		; ^
 
 	; Interrupts
 		; ISC3[1:0]	= 10	= Trigger INT3 on Falling Edge
@@ -213,27 +224,181 @@ NEXT_GAME_STAGE_1:
 NEXT_GAME_STAGE_2:
 	ldi		mpr, 3					; Update GAME_STAGE
 	st		X, mpr					; ^
-
-	; Start 6s timer
-
+	rcall	TIMER
 	rjmp	NEXT_GAME_STAGE_END
 
 NEXT_GAME_STAGE_3:
 	ldi		mpr, 4					; Update GAME_STAGE
 	st		X, mpr					; ^
-
-	; Start 6s timer
-
+	rcall	TIMER
 	rjmp	NEXT_GAME_STAGE_END
 
 NEXT_GAME_STAGE_4:
-	ldi		mpr, 0					; Update GAME_STAGE
+	ldi		mpr, 0					; Update GAME_STAGE, so it wraps around and next time it begins at the start
 	st		X, mpr					; ^
+	rcall	TIMER
 	ldi		mpr, (0<<INT6 | 1<<INT3 | 0<<INT2 | 0<<INT1 | 1<<INT0)	; Enable INT3 (PD7) so it can start the game again
 	sts		EIMSK, mpr												; ^
 	rjmp	NEXT_GAME_STAGE_END
 
 NEXT_GAME_STAGE_END:
+	; Restore variables
+	pop		XL
+	pop		XH
+	pop		mpr
+
+	; Return from function
+	ret
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	
+;-----------------------------------------------------------
+;FUNC:
+	; Save variables
+	push	mpr
+
+	; Func
+	
+;-----------------------------------------------------------
+; Func:	
+; Desc:	
+;-----------------------------------------------------------
+;FUNC:
+	; Save variables
+	push	mpr
+
+	; Func
+
+	; Restore variables
+	pop		mpr
+
+	; Return from function
+	ret
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	
+;-----------------------------------------------------------
+;FUNC:
+	; Save variables
+	push	mpr
+
+	; Func
+
+	; Restore variables
+	pop		mpr
+
+	; Return from function
+	ret
+
+	; Restore variables
+	pop		mpr
+
+	; Return from function
+	ret
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	
+;-----------------------------------------------------------
+;FUNC:
+	; Save variables
+	push	mpr
+
+	; Func
+
+	; Restore variables
+	pop		mpr
+
+	; Return from function
+	ret
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	
+;-----------------------------------------------------------
+TIMER_START:
+
+	
+	
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	
+;-----------------------------------------------------------
+TIMER:
+	; Save variables
+	push	mpr
+	push	XH
+	push	XL
+
+	; Load in COUNTDOWN
+	ldi		XH, high(COUNTDOWN)
+	ldi		XL,	low(COUNTDOWN)
+	ld		mpr, X
+
+	; Branch based on current COUNTDOWN
+	cpi		mpr, 4
+	breq	TIMER_4
+	cpi		mpr, 3
+	breq	TIMER_3
+	cpi		mpr, 2
+	breq	TIMER_2
+	cpi		mpr, 1
+	breq	TIMER_1
+	cpi		mpr, 0
+	breq	TIMER_0
+
+	; If no compare match, branch to end
+	rjmp	TIMER_END
+
+TIMER_4:						; Start timer
+	ldi		mpr, 3				; Update COUNTDOWN
+	st		X, mpr				; ^
+	in		mpr, PORTB			; Update LEDs
+	andi	mpr, 0b1111_1111	; ^
+	out		PORTB, mpr			; ^
+	ldi		mpr, (0<<ICIE1 | 0<<OCIE1C | 0<<OCIE1B | 0<<OCIE1A | 1<<TOIE1)	; TOIE1	= 1	= Overflow Interrupt Enabled
+	sts		TIMSK1, mpr														; ^
+	rjmp	TIMER_END
+
+TIMER_3:
+	ldi		mpr, 2				; Update COUNTDOWN
+	st		X, mpr				; ^
+	in		mpr, PORTB			; Update LEDs
+	andi	mpr, 0b0111_1111	; ^
+	out		PORTB, mpr			; ^
+	rjmp	TIMER_END
+
+TIMER_2:
+	ldi		mpr, 1				; Update COUNTDOWN
+	st		X, mpr				; ^
+	in		mpr, PORTB			; Update LEDs
+	andi	mpr, 0b0011_1111	; ^
+	out		PORTB, mpr			; ^
+	rjmp	TIMER_END
+
+TIMER_1:
+	ldi		mpr, 0				; Update COUNTDOWN
+	st		X, mpr				; ^
+	in		mpr, PORTB			; Update LEDs
+	andi	mpr, 0b0001_1111	; ^
+	out		PORTB, mpr			; ^
+	rjmp	TIMER_END
+
+TIMER_0:						; End timer
+	ldi		mpr, 4				; Update COUNTDOWN, so it wraps around and next time it begins at the start
+	st		X, mpr				; ^
+	in		mpr, PORTB			; Update LEDs
+	andi	mpr, 0b0000_1111	; ^
+	out		PORTB, mpr			; ^
+	ldi		mpr, (0<<ICIE1 | 0<<OCIE1C | 0<<OCIE1B | 0<<OCIE1A | 0<<TOIE1)	; TOIE1	= 0	= Overflow Interrupt Disabled
+	sts		TIMSK1, mpr														; ^
+	rcall	NEXT_GAME_STAGE		; Update GAME_STAGE
+	rjmp	TIMER_END
+
+TIMER_END:
 	; Restore variables
 	pop		XL
 	pop		XH
@@ -342,70 +507,6 @@ LCD_BOTTOM_LOOP:
 	pop		XL
 	pop		XH
 	pop		ilcnt
-	pop		mpr
-
-	; Return from function
-	ret
-
-;-----------------------------------------------------------
-; Func:	
-; Desc:	
-;-----------------------------------------------------------
-;FUNC:
-	; Save variables
-	push	mpr
-
-	; Func
-	
-;-----------------------------------------------------------
-; Func:	
-; Desc:	
-;-----------------------------------------------------------
-;FUNC:
-	; Save variables
-	push	mpr
-
-	; Func
-
-	; Restore variables
-	pop		mpr
-
-	; Return from function
-	ret
-
-;-----------------------------------------------------------
-; Func:	
-; Desc:	
-;-----------------------------------------------------------
-;FUNC:
-	; Save variables
-	push	mpr
-
-	; Func
-
-	; Restore variables
-	pop		mpr
-
-	; Return from function
-	ret
-
-	; Restore variables
-	pop		mpr
-
-	; Return from function
-	ret
-
-;-----------------------------------------------------------
-; Func:	
-; Desc:	
-;-----------------------------------------------------------
-;FUNC:
-	; Save variables
-	push	mpr
-
-	; Func
-
-	; Restore variables
 	pop		mpr
 
 	; Return from function
