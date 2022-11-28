@@ -251,7 +251,7 @@ INIT:
     ldi     mpr, (1<<U2X1)
     sts     UCSR1A, mpr
     ; Set recieve & transmit complete interrupts, transmitter & reciever enable, 8 data bits frame formate
-    ldi     mpr, (1<<RXCIE1 | 0<<TXCIE1 | 0<<UDRIE1 | 1<<RXEN1 | 1<<TXEN1 | 0<<UCSZ12)
+    ldi     mpr, (1<<RXCIE1 | 1<<TXCIE1 | 0<<UDRIE1 | 1<<RXEN1 | 1<<TXEN1 | 0<<UCSZ12)
     sts     UCSR1B, mpr
     ; Set frame formate: 8 data bits, 2 stop bits, asnych, no parity
     ldi     mpr, (0<<UMSEL11 | 0<<UMSEL10 | 0<<UPM11 | 0<<UPM10 | 1<<USBS1 | 1<<UCSZ11 | 1<<UCSZ10 | 0<<UCPOL1)
@@ -411,7 +411,6 @@ SEND_READY:
     pop mpr
     ret
 
-; Blink LED if start message is received
 MESSAGE_RECEIVE:
     ;----------------------------------------------------------------
     ; Sub:  Message Receive
@@ -426,9 +425,14 @@ MESSAGE_RECEIVE:
     
     ;--------- Read message in UDR1 -----------;
     lds     mpr, UDR1               ; Read the incoming data
-    ldi     ZH, high(SOME_DATA)
-    ldi     ZL, low(SOME_DATA)
-    st      Z, mpr                  ; Store message to SOME_DATA
+    ldi     olcnt, start_msg
+    cpse    mpr, olcnt
+    rjmp    MR_R2                   ; Skipped if equal
+    call    RECEIVE_START           ; Go to receive start
+
+ MR_R2:
+    ; other checks here
+
 
     sei                             ; Turn interrupts back on
     pop ZL
@@ -508,6 +512,10 @@ START_GAME:
 
 
 TRANSMIT_CHECK:
+    ;----------------------------------------------------------------
+    ; Sub:  Transmit Check
+    ; Desc: Does a status check after a message has been transmitter on USART1
+    ;----------------------------------------------------------------
     push mpr
     push ilcnt
     push ZH
@@ -515,7 +523,7 @@ TRANSMIT_CHECK:
     push XH
     push XL
 
-    ; Check to see if we should start the game
+    ;--------- Check to see if we should start the game ----------------;
     ldi     ZH, high(User_Ready_flag)       ; Load both ready flags
     ldi     ZL, low(User_Ready_flag)
     ld      mpr, Z
@@ -536,12 +544,6 @@ TRANSMIT_CHECK:
     pop mpr
     ret
 
-
-
-OPPONENT_SELECT:
-    ret
-
-
 UPDATE_TIMER:
     push mpr
     push ZH
@@ -558,54 +560,23 @@ UPDATE_TIMER:
     dec     mpr
     st      Z, mpr
     ;------------------------- Adjust the LEDs --------------------------;
-
     clc                         ; Clear the carry flag
     in      mpr, PINB           ; Read in current LEDs
     ror     mpr                 ; Shift to the right by 1
     out     PORTB, mpr          ; Put it back on the port
-    cpi     mpr, 0
+    cpi     mpr, 0              ; Turn off TOV01 interrupt flag if @ 0
     breq    OFF
-    rjmp    END
+    rjmp    END                 ; Else return normally
 
-
-
-    cpi     mpr, 3              ; If TCounter is 3
-    breq    THREE_ON
-    cpi     mpr, 2             ; If TCounter is 2
-    breq    TWO_ON
-    cpi     mpr, 1             ; If TCounter is 1
-    breq    ONE_ON
-    cpi     mpr, 0             ; If TCounter is 0
-    breq    OFF
-    rjmp    END                ; In case we miss all the compares
-    
- THREE_ON:
-    ldi     mpr, 0b0111_0000
-    out     PORTB, mpr
-    rjmp    END
- TWO_ON:
-    ldi     mpr, 0b0011_0000
-    out     PORTB, mpr
-    rjmp    END
- ONE_ON:
-    ldi     mpr, 0b0001_0000
-    out     PORTB, mpr
-    rjmp    END
  OFF: 
-    ;ldi     mpr, 0b0000_0000
-    ;out     PORTB, mpr
     ldi     mpr, (0<<TOIE1)     ; Clear TOV01 enable
     sts     TIMSK1, mpr
-    rjmp    END
 
  END:
-    pop ZL
+    pop ZL                      ; Regular return stuff
     pop ZH
     pop mpr
     ret
-
-
-
 
 Wait:
     ;----------------------------------------------------------------
