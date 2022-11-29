@@ -185,10 +185,10 @@
 
 
 .org    $0002                   ; INT0  Cycle through selection
-        ; Travis's fnuction
+        rcall CYCLE_HAND
         reti
 
-.org    $0004                   ; INT1 No use yet
+.org    $0004                   ; INT1 Send Start Msg
         rcall NEXT_GAME_STAGE
         reti
 
@@ -232,20 +232,6 @@ INIT:
     out     DDRB, mpr
     ldi     mpr, $00
     out     PORTB, mpr
-
-
-    ; USART1
-    ; Frame Format:
-    ;   Data Frame          8-bit
-    ;   Stop bit            2 stop bits
-    ;   Parity bit          disable
-    ;   Asynchronous Operation
-    ; Baud 2400
-    ; Data register empty interrupt enabled
-    ; Recieve complete interrupt enabled
-    ; Transmit complete interrupt enabled
-    ; Double data rate enabled
-    ; Reciever & Transmitter enabled
 
     ; Set double data rate
     ldi     mpr, (1<<U2X1)
@@ -302,7 +288,7 @@ INIT:
     sts     EICRA, mpr          ; falling edge
 
     ; Configure the External Interrupt Mask
-    ldi     mpr, 0b0000_0011    ; Enable INT3, INT1, INT0
+    ldi     mpr, (1<<INT1 | 0<<INT0)    ; Enable INT1. Disable INT0 for now
     out     EIMSK, mpr
 
 
@@ -430,6 +416,7 @@ LCD_BOTTOM:
 
     ; Return from function
     ret
+
 
 ; USART -----------------------------
 MESSAGE_RECEIVE:
@@ -615,41 +602,46 @@ NEXT_GAME_STAGE:
     breq    NEXT_GAME_STAGE_4
     rjmp    NEXT_GAME_STAGE_END         ; In case checks are skipped
 
-    ; Send ready message          -- waiting to send
- NEXT_GAME_STAGE_0:
+
+ NEXT_GAME_STAGE_0: ; This is called after pressing PD7 (Start game)
     ldi     mpr, 1                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
     ldi     mpr, (0<<INT1 | 1<<INT0)    ; Disable INT1 (PD7) because it's only use was to start the game
-    sts     EIMSK, mpr                  ; ^ INT0 (PD4) is still needed to change HAND_USER
+    sts     EIMSK, mpr                  ; ^ Enable INT0 (PD4) to change HAND_USER
     call    SEND_READY                  ; Send the ready message via USART1
     rjmp    NEXT_GAME_STAGE_END
     
-    ; After sending ready message -- idle
- NEXT_GAME_STAGE_1:
+ NEXT_GAME_STAGE_1: ; This is called after sending SEND_READY
     ldi     mpr, 2                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    rjmp    NEXT_GAME_STAGE_END
+    rjmp    NEXT_GAME_STAGE_END         ; Should only be called by Transmit check when both are ready
 
-    ; After receiving the other ready message -- game start
- NEXT_GAME_STAGE_2:
+ NEXT_GAME_STAGE_2: ; This is called after receiving the start msg - Game starts
     ldi     mpr, 3                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
     rcall   TIMER_START                 ; Allow players to choose hand during timer countdown
+    ; Show start message
     rjmp    NEXT_GAME_STAGE_END
     
-    ; After 6 second timer ends on selecting the hand
- NEXT_GAME_STAGE_3:
+ NEXT_GAME_STAGE_3: ; This is called after the first timer ends
     ldi     mpr, 4                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    rcall   TIMER_START                 ; Display both hands
+    rcall   TIMER_START                 
+    ldi     mpr, (0<<INT1 | 0<<INT0)    ; Disable the ability to change hand
+    sts     EIMSK, mpr
+    call    DISPLAY_OPNT_HAND           ; Display opponents hand
+
     rjmp    NEXT_GAME_STAGE_END
     
     ; Show who won
- NEXT_GAME_STAGE_4:
+ NEXT_GAME_STAGE_4: ; This is called after the hands are displayed - show the winner now
     ldi     mpr, 0                      ; Update GAME_STAGE, so it wraps around and next time it begins at the start
     st      X, mpr                      ; ^
     rcall   TIMER_START
-    ldi     mpr, (1<<INT1 | 1<<INT0)    ; Enable INT3 (PD7) so it can start the game again
+
+    ; The line below should take place in the timer function not here
+    ldi     mpr, (1<<INT1 | 0<<INT0)    ; Enable INT3 (PD7) so it can start the game again
+
     sts     EIMSK, mpr                  ; ^
     rjmp    NEXT_GAME_STAGE_END
 
@@ -704,10 +696,97 @@ STORE_HAND:
     pop mpr
     ret 
 
+DISPLAY_OPNT_HAND:
+    ;-----------------------------------------------------------
+    ; Func: Display hands
+    ; Desc: Displays opponents hand to the top LCD
+    ;-----------------------------------------------------------
+    push mpr
+    push ZH
+    push ZL
+
+    ldi     ZH, high(HAND_OPNT)     ; Load the OPNT hand into mpr
+    ldi     ZL, low(HAND_OPNT)
+    ld      mpr, Z 
+
+    cpi     mpr, ROCK 
+    breq    DHO_ROCK
+    cpi     mpr, SCISSOR
+    breq    DHO_SCISSOR
+    rjmp    DHO_PAPER               ; Last case & in case all other cases fall through
+ DHO_ROCK:
+    ldi     ZH, high(ROCK_STR<<1)
+    ldi     ZL, low(ROCK_STR<<1)
+    rjmp    DHO_DISP_OPNT
+ DHO_SCISSOR:
+    ldi     ZH, high(SCISSOR_STR<<1)
+    ldi     ZL, low(SCISSOR_STR<<1)
+    rjmp    DHO_DISP_OPNT
+ DHO_PAPER:
+    ldi     ZH, high(PAPER_STR<<1)
+    ldi     ZL, low(PAPER_STR<<1)
+    rjmp    DHO_DISP_OPNT
+ DHO_DISP_OPNT:
+    call    LCD_TOP                 ; Display whatever Z is pointing at now
+
+    
+
+    pop ZL
+    pop ZH
+    pop mpr
+    ret
+
+CYCLE_HAND:
+    ;-----------------------------------------------------------
+    ; Func: Cycle hand
+    ; Desc: Cycles and displays the player's hand on the LCD
+    ;-----------------------------------------------------------
+    push mpr
+    push ZH
+    push ZL
 
 
+    ldi     ZH, high(HAND_USER)     ; Load the USER hand into mpr
+    ldi     ZL, low(HAND_USER)
+    ld      mpr, Z      
+    inc     mpr                     ; Increment the selection
+    sbrs    mpr, 2                  ; If the 3rd bit is set, i.e. value is 0b0000_01xxx
+    rjmp    RESET_HAND
+    st      Z, mpr                  ; Else store new value
+    rjmp    CH_SKIP
+ RESET_HAND:
+    ldi     mpr, $01                ; Store a 1 to Z
+    st      Z, mpr
+ CH_SKIP:
 
+    cpi     mpr, ROCK 
+    breq    DHP_ROCK
+    cpi     mpr, SCISSOR
+    breq    DHP_SCISSOR
+    rjmp    DHP_PAPER               ; Last case & in case all other cases fall through
+ DHP_ROCK:
+    ldi     ZH, high(ROCK_STR<<1)
+    ldi     ZL, low(ROCK_STR<<1)
+    rjmp    DHP_DISP_OPNT
+ DHP_SCISSOR:
+    ldi     ZH, high(SCISSOR_STR<<1)
+    ldi     ZL, low(SCISSOR_STR<<1)
+    rjmp    DHP_DISP_OPNT
+ DHP_PAPER:
+    ldi     ZH, high(PAPER_STR<<1)
+    ldi     ZL, low(PAPER_STR<<1)
+    rjmp    DHP_DISP_OPNT
+ DHP_DISP_OPNT:
+    call    LCD_BOTTOM              ; Display whatever Z is pointing at now
 
+    ; Clear the queue
+    ldi     mpr, 0b0000_0011        ; Clear interrupts
+    out     EIFR, mpr
+
+    pop ZL
+    pop ZH
+    pop mpr
+    ret
 
 LED_TOGGLE:
     push  waitcnt
@@ -723,6 +802,11 @@ LED_TOGGLE:
     ret
 
 TIMER_START:
+    ;-----------------------------------------------------------
+    ; Func: Timer Start
+    ; Desc: Starts the timer for a 4 * 1.5 second delay. Total of 
+    ;       6 second delay until OFF is called within update timer. 
+    ;-----------------------------------------------------------
     push mpr
     push ZH
     push ZL
