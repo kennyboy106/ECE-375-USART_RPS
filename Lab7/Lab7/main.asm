@@ -24,12 +24,12 @@
 ;               Thus we can write 14 bits to it in general
 ;           Since we are doing double data rate we use the following eq to solve
 ;               for UBRR
-;               UBRR = (f_clk / (8 * baud)) - 1 = 1Mhz / 8 * 2400 - 1 = 51.08333 = 51
-;           51 -> $33
-;           ldi  mpr, $33
+;               UBRR = (f_clk / (8 * baud)) - 1 = 8Mhz / 8 * 2400 - 1 = 415.6667
+;           415.666 == 416 -> $01A0
+;           ldi  mpr, $A0
 ;           sts  UBRRL, mpr
 ;           lds  mpr, UBRRH
-;           and  mpr, 0b1111_0000
+;           ori  mpr, 0b0000_0001
 ;           sts  UBRRH, mpr
 ;
 ;       Data Register is UDR1
@@ -103,9 +103,10 @@
 ;
 ;       Comparing gestures
 ;           We want to have codes for what each selection is:
-;               Rock can be     0b0000_0001
-;               Scissors can be 0b0000_0010
-;               Paper can be    0b0000_0011
+;               Rock can be     0b0000_0000
+;               Scissors can be 0b0000_0001
+;               Paper can be    0b0000_0010
+;                               0b0000_0011
 ;           On the users board show on the LCD what they have selected
 ;           by using a word or letter - both are equally easy
 ;           
@@ -159,25 +160,17 @@
 ;*  Internal Register Definitions and Constants
 ;***********************************************************
 .def    mpr = r16               ; Multi-Purpose Register
-.def    waitcnt = r17               ; Wait Loop Counter
+.def    waitcnt = r17           ; Wait Loop Counter
 .def    ilcnt = r18
 .def    olcnt = r19
 
-.equ    WTime = 100             ; Time to wait in wait loop
+.equ    WTime = 15             ; Time to wait in wait loop
 
-.equ    WskrR = 0               ; Right Whisker Input Bit
-.equ    WskrL = 1               ; Left Whisker Input Bit
-.equ    EngEnR = 4              ; Right Engine Enable Bit
-.equ    EngEnL = 7              ; Left Engine Enable Bit
-.equ    EngDirR = 5             ; Right Engine Direction Bit
-.equ    EngDirL = 6             ; Left Engine Direction Bit
-
-;.equ   BotAddress = ;(Enter your robot's address here (8 bits))
-.equ    rock        = 0b0000_0001
-.equ    paper       = 0b0000_0010
-.equ    scissor     = 0b0000_0011
-.equ    start_msg   = 0b0000_0100
-
+.equ    rock            = 0b0000_0001
+.equ    paper           = 0b0000_0010
+.equ    scissor         = 0b0000_0011
+.equ    SIG_READY       = 0b1111_1111       ; Signal for ready to start game
+.equ    SIG_NOT_READY   = 0b0000_0000   
 
 ;***********************************************************
 ;*  Start of Code Segment
@@ -190,14 +183,13 @@
 .org    $0000                   ; Beginning of IVs
         rjmp    INIT            ; Reset interrupt
 
+
 .org    $0002                   ; INT0  Cycle through selection
+        ; Travis's fnuction
         reti
 
 .org    $0004                   ; INT1 No use yet
-        reti
-
-.org    $0008                   ; INT3 The start button
-        ;rcall SEND_READY
+        rcall NEXT_GAME_STAGE
         reti
 
 .org    $0028                   ; Timer/Counter 1 Overflow
@@ -207,14 +199,15 @@
 .org    $0032                   ; USART1 Rx Complete
         rcall MESSAGE_RECEIVE
         reti
+
+.org    $0034                   ; USART Data Register Empty
+        reti
+
 .org    $0036                   ; USART1 Tx Complete
         rcall TRANSMIT_CHECK
         reti
 
-;Should have Interrupt vectors for:
-;- Left whisker
-;- Right whisker
-;- USART receive
+
 
 .org    $0056                   ; End of Interrupt Vectors
 
@@ -229,10 +222,9 @@ INIT:
     out     SPL, mpr
 
     ; I/O Ports
-    ; Configure PORTD for input
-    ldi     mpr, $00
-    out     DDRD, mpr
-    ldi     mpr, $FF
+    ldi     mpr, (1<<PD3 | 0b0000_0000) ; Set Port D pin 3 (TXD1) for output
+    out     DDRD, mpr                   ; Set Port D pin 2 (RXD1) for input
+    ldi     mpr, $FF                    ; Enable pull up resistors
     out     PORTD, mpr
 
     ; Configure PORTB for output
@@ -254,71 +246,65 @@ INIT:
     ; Transmit complete interrupt enabled
     ; Double data rate enabled
     ; Reciever & Transmitter enabled
+
+    ; Set double data rate
     ldi     mpr, (1<<U2X1)
     sts     UCSR1A, mpr
-    ldi     mpr, (1<<RXCIE1 | 1<<TXCIE1 | 1<<RXEN1 | 1<<TXEN1 | 0<<UCSZ12)
+    ; Set recieve & transmit complete interrupts, transmitter & reciever enable, 8 data bits frame formate
+    ldi     mpr, (1<<RXCIE1 | 1<<TXCIE1 | 0<<UDRIE1 | 1<<RXEN1 | 1<<TXEN1 | 0<<UCSZ12)
     sts     UCSR1B, mpr
+    ; Set frame formate: 8 data bits, 2 stop bits, asnych, no parity
     ldi     mpr, (0<<UMSEL11 | 0<<UMSEL10 | 0<<UPM11 | 0<<UPM10 | 1<<USBS1 | 1<<UCSZ11 | 1<<UCSZ10 | 0<<UCPOL1)
     sts     UCSR1C, mpr
-    ; Baud
-    ldi  mpr, $33
-    sts  UBRR1L, mpr
-    lds  mpr, UBRR1H
-    andi mpr, 0b1111_0000
-    sts  UBRR1H, mpr
+    ; Baud to 2400 @ double data rate
+    ldi     mpr, high(416)
+    sts     UBRR1H, mpr
+    ldi     mpr, low(416)
+    sts     UBRR1L, mpr
     
     ; Timer/Counter 1
     ; Setup for normal mode WGM 0000
     ; COM diconnected 00
     ; Use OCR1A for top value
-    ; CS TBD, using 001 (no prescale) for now
+    ; CS TBD, using 100
     ldi     mpr, (0<<COM1A1 | 0<<COM1A0 | 0<<COM1B1 | 0<<COM1B0 | 0<<WGM11 | 0<<WGM10)
     sts     TCCR1A, mpr
     ldi     mpr, (0<<WGM13 | 0<<WGM12 | 1<<CS12 | 0<<CS11 | 0<<CS10)
     sts     TCCR1B, mpr
-    ; Use TOV01 flag 
-    ; Top value will be 0xFFF
-    ; Counter value needed for 1.5 second delay is:
-    ;   Delay = ((MAX+1 - value) * prescale) / clk_I/O
-    ;   clk is 8Mhz and prescale @ 256 we get
-    ;   value = 18,661 = $48E6
-    ; For the interrupt i set TIMSK1 to 1<<TOIE1
-    ; PLACE THE FOLLOWING CODE WHERE WE USE THE COUNTER
-    ;        ldi     mpr, (1<<TOIE1)     ; Set TOV01 enable
-    ;        sts     TIMSK1, mpr
-    ;        ldi     mpr, $A4
-    ;        sts     TCNT1H, mpr         ; Write high then low
-    ;        ldi     mpr, $73
-    ;        sts     TCNT1L, mpr
+    
 
-
-
-
-        
-
-    ; External Interrupts
-    ; Initialize external interrupts
-    ;ldi     mpr, 0b1000_1010    ; Set INT3, INT1, INT0 to trigger on 
-    ;sts     EICRA, mpr          ; falling edge
-
-    ; Configure the External Interrupt Mask
-    ;ldi     mpr, 0b0000_1011    ; Enable INT3, INT1, INT0
-    ;out     EIMSK, mpr
-
-
-    call    LCDInit
+    call    LCDInit                         ; Initialize LCD
     call    LCDBacklightOn
-    call    LCDWelcome
+    ldi     ZH, high(WELCOME_STR<<1)        ; Point Z to the welcome string
+    ldi     ZL, low(WELCOME_STR<<1)
+    call    LCD_ALL                         ; Print welcome message
 
     ; Set the ready flags
     ldi     mpr, $FF
     ldi     ZH, high(User_Ready_flag)       ; Load both ready flags
     ldi     ZL, low(User_Ready_flag)
-    st      Z, mpr                          ; Clear them
+    st      Z, mpr                          
     ldi     mpr, $0F                        ; Make sure the flags are different
     ldi     ZH, high(Opnt_Ready_flag)
     ldi     ZL, low(Opnt_Ready_flag)
     st      Z, mpr
+    ; Set the SOME_DATA register
+    ldi     mpr, $FF
+    ldi     ZH, high(SOME_DATA)       ; Load both ready flags
+    ldi     ZL, low(SOME_DATA)
+    st      Z, mpr 
+   
+
+    ; External Interrupts
+    ; Initialize external interrupts
+    ldi     mpr, 0b0000_1010    ; Set INT1, INT0 to trigger on 
+    sts     EICRA, mpr          ; falling edge
+
+    ; Configure the External Interrupt Mask
+    ldi     mpr, 0b0000_0011    ; Enable INT3, INT1, INT0
+    out     EIMSK, mpr
+
+
 
     ; Enable global interrupts
     sei
@@ -328,127 +314,250 @@ INIT:
 ;*  Main Program
 ;***********************************************************
 MAIN:
-        sbis    PIND, PIND7     ; Send ready signal
-        rcall   SEND_READY
+
+        ;rjmp    MAIN
+        
+        ldi     ZH, high(SOME_DATA)     ; Poll for data in SOME_DATA
+        ldi     ZL, low(SOME_DATA)
+        ld      mpr, Z
+
+        cpi     mpr, SIG_READY          ; If its the start message
+        breq    BR_RECEIVE_START
 
         rjmp    MAIN
+
+
+BR_RECEIVE_START:
+    push mpr
+    push ZH
+    push ZL
+
+    ldi     mpr, $FF                    ; Clear the SOME_DATA variable
+    ldi     ZH, high(SOME_DATA)
+    ldi     ZL, low(SOME_DATA)
+    st      Z, mpr 
+    call    RECEIVE_START               ; Go to RECEIVE_START
+
+    pop ZL
+    pop ZH
+    pop mpr
+    rjmp    MAIN
 
 ;***********************************************************
 ;*  Functions and Subroutines
 ;***********************************************************
-LCDWelcome:
-    ;----------------------------------------------------------------
-    ; Sub:  LCD Welcome 
-    ; Desc: Prints the Welcome message to the LCD
-    ;----------------------------------------------------------------
-    push mpr
-    push ZH
-    push ZL
-    push XH
-    push XL
-    push olcnt
 
-    ldi     ZH, high(WELCOME_STR<<1)    ; Point Z to the welcome string
-    ldi     ZL, low(WELCOME_STR<<1)
-    ldi     XH, $01                     ; Point X to the top of the LCD Screen
-    ldi     XL, $00 
-    ldi     olcnt, 32                   ; We want to loop for all 32 characters
- Wel_loop:
-    lpm     mpr, Z+                     ; Load char into mpr
-    st      X+, mpr                     ; Store char in screen
-    dec     olcnt
-    brne    Wel_loop
-    call    LCDWrite                    ; Call write after all chars are set
+;-----------------------------------------------------------
+; Func: 
+; Desc: Assumes Z already points to string.
+;-----------------------------------------------------------
+LCD_ALL:
+    ; Save variables
+    push    mpr
+    push    ilcnt
+    push    XH
+    push    XL
 
-    pop olcnt
-    pop XL
-    pop XH
-    pop ZL
-    pop ZH
-    pop mpr
+    ; Set parameters
+    ldi     XH, $01                     ; Point X to LCD top line
+    ldi     XL, $00                     ; ^
+    ldi     ilcnt, 32                   ; Loop 32 times for 32 characters
+
+ LCD_ALL_LOOP:
+    ; Load in characters
+    lpm     mpr, Z+
+    st      X+, mpr
+    dec     ilcnt
+    brne    LCD_ALL_LOOP
+
+    ; Write to LCD
+    call    LCDWrite
+
+    ; Restore variables
+    pop     XL
+    pop     XH
+    pop     ilcnt
+    pop     mpr
+
+    ; Return from function
     ret
 
-LCDReady:
-    ;----------------------------------------------------------------
-    ; Sub:  LCD Ready 
-    ; Desc: Prints the ready message to the LCD
-    ;----------------------------------------------------------------
-    push mpr
-    push ZH
-    push ZL
-    push XH
-    push XL
-    push olcnt
+;-----------------------------------------------------------
+; Func: 
+; Desc: Assumes Z already points to string.
+;-----------------------------------------------------------
+LCD_TOP:
+    ; Save variables
+    push    mpr
+    push    ilcnt
+    push    XH
+    push    XL
 
-    ldi     ZH, high(READY_STR<<1)    ; Point Z to the welcome string
-    ldi     ZL, low(READY_STR<<1)
-    ldi     XH, $01                     ; Point X to the top of the LCD Screen
-    ldi     XL, $00 
-    ldi     olcnt, 32                   ; We want to loop for all 32 characters
- Red_loop:
-    lpm     mpr, Z+                     ; Load char into mpr
-    st      X+, mpr                     ; Store char in screen
-    dec     olcnt
-    brne    Red_loop
-    call    LCDWrite                    ; Call write after all chars are set
+    ; Set parameters
+    ldi     XH, $01                     ; Point X to LCD top line
+    ldi     XL, $00                     ; ^
+    ldi     ilcnt, 16                   ; Loop 16 times for 16 characters
 
-    pop olcnt
-    pop XL
-    pop XH
-    pop ZL
-    pop ZH
-    pop mpr
+ LCD_TOP_LOOP:
+    ; Load in characters
+    lpm     mpr, Z+
+    st      X+, mpr
+    dec     ilcnt
+    brne    LCD_TOP_LOOP
+
+    ; Write to LCD
+    call    LCDWrite
+
+    ; Restore variables
+    pop     XL
+    pop     XH
+    pop     ilcnt
+    pop     mpr
+
+    ; Return from function
+    ret
+    
+;-----------------------------------------------------------
+; Func: 
+; Desc: Assumes Z already points to string.
+;-----------------------------------------------------------
+LCD_BOTTOM:
+    ; Save variables
+    push    mpr
+    push    ilcnt
+    push    XH
+    push    XL
+
+    ; Set parameters
+    ldi     XH, $01                     ; Point X to LCD bottom line
+    ldi     XL, $10                     ; ^
+    ldi     ilcnt, 16                   ; Loop 16 times for 16 characters
+
+ LCD_BOTTOM_LOOP:
+    ; Load in characters
+    lpm     mpr, Z+
+    st      X+, mpr
+    dec     ilcnt
+    brne    LCD_BOTTOM_LOOP
+
+    ; Write to LCD
+    call    LCDWrite
+
+    ; Restore variables
+    pop     XL
+    pop     XH
+    pop     ilcnt
+    pop     mpr
+
+    ; Return from function
+    ret
+
+NEXT_GAME_STAGE:
+    ;-----------------------------------------------------------
+    ; Func: 
+    ; Desc: This is essentially the core function of the game.
+    ;       Game stages change as follows:
+    ;           0 -> 1      0 = IDLE
+    ;           1 -> 2      1 = READY UP
+    ;           2 -> 3      2 = SELECT HAND
+    ;           3 -> 4      3 = REVEAL HANDS
+    ;           4 -> 0      4 = RESULT
+    ;-----------------------------------------------------------
+    ; Save variables
+    push    mpr
+    push    XH
+    push    XL
+
+    ; Branch based on current Game Stage
+    ldi     XH, high(GAME_STAGE)
+    ldi     XL, low(GAME_STAGE)
+    ld      mpr, X
+
+    cpi     mpr, 0
+    breq    NEXT_GAME_STAGE_0
+    cpi     mpr, 1
+    breq    NEXT_GAME_STAGE_1
+    cpi     mpr, 2
+    breq    NEXT_GAME_STAGE_2
+    cpi     mpr, 3
+    breq    NEXT_GAME_STAGE_3
+    cpi     mpr, 4
+    breq    NEXT_GAME_STAGE_4
+
+ NEXT_GAME_STAGE_0:
+    ldi     mpr, 1                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+    ldi     mpr, (0<<INT1 | 1<<INT0)    ; Disable INT1 (PD7) because it's only use was to start the game
+    sts     EIMSK, mpr                  ; ^ INT0 (PD4) is still needed to change HAND_USER
+    call    SEND_READY                  ; Send the ready message via USART1
+    rjmp    NEXT_GAME_STAGE_END
+
+ NEXT_GAME_STAGE_1:
+    ldi     mpr, 2                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+    rjmp    NEXT_GAME_STAGE_END
+    
+ NEXT_GAME_STAGE_2:
+    ldi     mpr, 3                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+    rcall   TIMER
+    rjmp    NEXT_GAME_STAGE_END
+
+ NEXT_GAME_STAGE_3:
+    ldi     mpr, 4                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+    rcall   TIMER
+    rjmp    NEXT_GAME_STAGE_END
+
+ NEXT_GAME_STAGE_4:
+    ldi     mpr, 0                      ; Update GAME_STAGE, so it wraps around and next time it begins at the start
+    st      X, mpr                      ; ^
+    rcall   TIMER
+    ldi     mpr, (1<<INT1 | 1<<INT0)    ; Enable INT3 (PD7) so it can start the game again
+    sts     EIMSK, mpr                  ; ^
+    rjmp    NEXT_GAME_STAGE_END
+
+ NEXT_GAME_STAGE_END:
+    ; Restore variables
+    pop     XL
+    pop     XH
+    pop     mpr
+
+    ; Return from function
     ret
 
 SEND_READY:
     ; Here we need to send a message via USART
     push mpr
+    push waitcnt
+
+    ldi     waitcnt, WTime                  ; Wait for one second
+    rcall   Wait
     
-    ldi     ZH, high(User_Ready_flag)    ; Load the ready flag
+    
+    
+    ldi     ZH, high(User_Ready_flag)   ; Load the ready flag
     ldi     ZL, low(User_Ready_flag)
     ldi     mpr, 1
     st      Z, mpr                      ; Store a 1 to the ready flag
-    call    LCDReady
-    ldi     mpr, start_msg              ; Send the start message to the other board
+    ldi     ZH, high(READY_STR<<1)      ; Point Z to the Ready string
+    ldi     ZL, low(READY_STR<<1)
+    call    LCD_ALL
+
+    ;-------------- Transmit via USART ----------;
+ Ready_Transmit:
+    lds     mpr, UCSR1A                 ; Load in USART status register
+    sbrs    mpr, UDRE1                  ; Check the UDRE1 flag
+    rjmp    Ready_Transmit              ; Loop back until data register is empty
+
+    ldi     mpr, SIG_READY              ; Send the start message to the other board
     sts     UDR1, mpr
-    pop mpr
-    ret
 
+    ; Clear the queue
+    ldi     mpr, 0b0000_0011        ; Clear interrupts
+    out     EIFR, mpr
 
-START_GAME:
-    push mpr
-    push ZH
-    push ZL
-
-    ; Clear the ready flags
-    ldi     mpr, $FF
-    ldi     ZH, high(User_Ready_flag)       ; Load both ready flags
-    ldi     ZL, low(User_Ready_flag)
-    st      Z, mpr                          ; Clear them
-    ldi     mpr, $F0                        ; Make sure the flags are different
-    ldi     ZH, high(Opnt_Ready_flag)
-    ldi     ZL, low(Opnt_Ready_flag)
-    st      Z, mpr
-
-    ; Start the counter
-    ldi     mpr, (1<<TOIE1)         ; Set TOV01 enable
-    sts     TIMSK1, mpr
-    ldi     mpr, $48                ; Starting counter at 18,661 for 1.5 second delay
-    sts     TCNT1H, mpr             ; Write high then low
-    ldi     mpr, $E5
-    sts     TCNT1L, mpr
-
-    ; Initialize counter var to be 4
-    ldi     mpr, 4
-    ldi     ZH, high(TCounter)
-    ldi     ZL, low(TCounter)
-    st      Z, mpr
-    ; Set LEDs
-    ldi     mpr, 0b1111_0000        ; Set upper 4 LEDs to be on
-    out     PORTB, mpr
-
-    pop ZL
-    pop ZH
+    pop waitcnt
     pop mpr
     ret
 
@@ -460,38 +569,103 @@ MESSAGE_RECEIVE:
     ;       to the appropriate function.
     ;----------------------------------------------------------------
     push mpr
+    push ZH
+    push ZL
+    cli                             ; Turn interrupts off
     
-    lds     mpr, UDR1       ; Read the incoming data
-    cpi     mpr, start_msg  ; If start message
-    breq    RECEIVE_START
-    ;cpi     mpr, rock       ; If rock message
-    ;breq    OPPONENT_SELECT ; Update opponents selection  
-    ;cpi     mpr, paper      ; If paper message
-    ;breq    OPPONENT_SELECT
-    ;cpi     mpr, scissor    ; If scissor message
-    ;breq    OPPONENT_SELECT
+    ;--------- Read message in UDR1 -----------;
+    lds     mpr, UDR1               ; Read the incoming data
+    ldi     olcnt, SIG_READY
+    cpse    mpr, olcnt
+    rjmp    MR_R2                   ; Skipped if equal
+    call    RECEIVE_START           ; Go to receive start
 
+ MR_R2:
+    ; other checks here
+
+
+    sei                             ; Turn interrupts back on
+    pop ZL
+    pop ZH
     pop mpr
     ret
+
 
 RECEIVE_START:
     push mpr
     push ZH
     push ZL
 
-    ; Change opponents ready flag to 1
-    ldi     mpr, 1
+    ldi     mpr, 1                      ; Change opponents ready flag to 1
     ldi     ZH, high(Opnt_Ready_flag)
     ldi     ZL, low(Opnt_Ready_flag)
     st      Z, mpr
-    call    TRANSMIT_CHECK                  ; Check to see if we should start
+    call    TRANSMIT_CHECK              ; Check to see if we should start
 
     pop ZL
     pop ZH
     pop mpr
     ret
 
+
+
+LED_TOGGLE:
+    push  waitcnt
+    push  mpr
+
+    ldi     waitcnt, 0b1000_0000
+    in      mpr, PINB 
+    eor     mpr, waitcnt    
+    out     PORTB, mpr
+    
+    pop mpr
+    pop waitcnt
+    ret
+
+START_GAME:
+    push mpr
+    push ZH
+    push ZL
+
+    ; Clear the ready flags
+    ldi     mpr, $FF
+    ldi     ZH, high(User_Ready_flag)       ; Load both ready flags
+    ldi     ZL, low(User_Ready_flag)
+    st      Z, mpr                          ; Clear them
+    ldi     mpr, $0F                        ; Make sure the flags are different
+    ldi     ZH, high(Opnt_Ready_flag)
+    ldi     ZL, low(Opnt_Ready_flag)
+    st      Z, mpr
+
+    ; Initialize counter var to be 4
+    ldi     mpr, 4
+    ldi     ZH, high(TCounter)
+    ldi     ZL, low(TCounter)
+    st      Z, mpr
+    ; Set LEDs
+    ldi     mpr, 0b1111_0000        ; Set upper 4 LEDs to be on
+    out     PORTB, mpr
+
+    ; Start the counter
+    ldi     mpr, (1<<TOIE1)         ; Set TOV01 enable
+    sts     TIMSK1, mpr
+    ldi     mpr, $48                ; Starting counter at 18,661 for 1.5 second delay
+    sts     TCNT1H, mpr             ; Write high then low
+    ldi     mpr, $E5
+    sts     TCNT1L, mpr
+
+
+    pop ZL
+    pop ZH
+    pop mpr
+    ret
+
+
 TRANSMIT_CHECK:
+    ;----------------------------------------------------------------
+    ; Sub:  Transmit Check
+    ; Desc: Does a status check after a message has been transmitter on USART1
+    ;----------------------------------------------------------------
     push mpr
     push ilcnt
     push ZH
@@ -499,32 +673,25 @@ TRANSMIT_CHECK:
     push XH
     push XL
 
-
-    ; Check to see if we should start the game
+    ;--------- Check to see if we should start the game ----------------;
     ldi     ZH, high(User_Ready_flag)       ; Load both ready flags
     ldi     ZL, low(User_Ready_flag)
     ld      mpr, Z
     ldi     XH, high(Opnt_Ready_flag)
     ldi     XL, low(Opnt_Ready_flag)
     ld      ilcnt, X
-    cp      mpr, ilcnt                       ; Compare the ready flags
-    breq    START_GAME                      ; Start the game
+    cpse    mpr, ilcnt                      ; Compare the ready flags
+    rjmp    TC_END                          ; If they aren't equal jump to end
+    call    START_GAME                      ; else start the game
 
+ TC_END:
     ; Other checks
-
-
-
-
     pop XL
     pop XH
     pop ZL
     pop ZH
     pop ilcnt
     pop mpr
-    ret
-
-
-OPPONENT_SELECT:
     ret
 
 UPDATE_TIMER:
@@ -543,41 +710,23 @@ UPDATE_TIMER:
     dec     mpr
     st      Z, mpr
     ;------------------------- Adjust the LEDs --------------------------;
-    cpi     mpr, 3             ; If TCounter is 3
-    breq    THREE_ON
-    cpi     mpr, 2             ; If TCounter is 2
-    breq    TWO_ON
-    cpi     mpr, 1             ; If TCounter is 1
-    breq    ONE_ON
-    cpi     mpr, 0             ; If TCounter is 0
+    clc                         ; Clear the carry flag
+    in      mpr, PINB           ; Read in current LEDs
+    ror     mpr                 ; Shift to the right by 1
+    out     PORTB, mpr          ; Put it back on the port
+    cpi     mpr, 0              ; Turn off TOV01 interrupt flag if @ 0
     breq    OFF
-    rjmp    END                ; In case we miss all the compares
-    
- THREE_ON:
-    ldi     mpr, 0b0111_0000
-    out     PORTB, mpr
-    rjmp    END
- TWO_ON:
-    ldi     mpr, 0b0011_0000
-    out     PORTB, mpr
-    rjmp    END
- ONE_ON:
-    ldi     mpr, 0b0001_0000
-    out     PORTB, mpr
-    rjmp    END
+    rjmp    END                 ; Else return normally
+
  OFF: 
-    ldi     mpr, 0b0000_0000
-    out     PORTB, mpr
     ldi     mpr, (0<<TOIE1)     ; Clear TOV01 enable
     sts     TIMSK1, mpr
-    rjmp    END
 
  END:
-    pop ZL
+    pop ZL                      ; Regular return stuff
     pop ZH
     pop mpr
     ret
-
 
 Wait:
     ;----------------------------------------------------------------
@@ -621,6 +770,8 @@ WINNER_STR:
         .DB "You Win!        "
 LOSER_STR:
         .DB "You Lose!       "
+DRAW_STR:
+        .DB "Draw            "
 ROCK_STR:
         .DB "Rock            "
 PAPER_STR:
@@ -633,13 +784,19 @@ SCISSOR_STR:
 ;***********************************************************
 .dseg
 .org    $0200
-User_Ready_flag:         ; Ready flag to be set when receiving start msg
+User_Ready_flag:        ; Ready flag to be set when receiving start msg
         .byte 1
-Opnt_Ready_flag:         ; Ready flag to be set when receiving start msg
+Opnt_Ready_flag:        ; Ready flag to be set when receiving start msg
         .byte 1
-TCounter:           ; Space for a counting variable
+TCounter:               ; Space for a counting variable
         .byte 1
-Selection:          ; Space for rock/paper/scissor selection
+HAND_USER:              ; User choice: Rock / Paper / Scissors
+        .byte 1
+HAND_OPNT:              ; Opponent choice: Rock / Paper / Scissors
+        .byte 1
+SOME_DATA:
+        .byte 1
+GAME_STAGE:             ; Indicates the current stage the game is in
         .byte 1
 
 ;***********************************************************
