@@ -166,11 +166,11 @@
 
 .equ    WTime = 15             ; Time to wait in wait loop
 
-.equ    rock        = 0b0000_0001
-.equ    paper       = 0b0000_0010
-.equ    scissor     = 0b0000_0011
-.equ    start_msg   = 0b0000_0100
-
+.equ    rock            = 0b0000_0001
+.equ    paper           = 0b0000_0010
+.equ    scissor         = 0b0000_0011
+.equ    SIG_READY       = 0b1111_1111       ; Signal for ready to start game
+.equ    SIG_NOT_READY   = 0b0000_0000   
 
 ;***********************************************************
 ;*  Start of Code Segment
@@ -189,7 +189,7 @@
         reti
 
 .org    $0004                   ; INT1 No use yet
-        rcall SEND_READY
+        rcall NEXT_GAME_STAGE
         reti
 
 .org    $0028                   ; Timer/Counter 1 Overflow
@@ -277,7 +277,7 @@ INIT:
     call    LCDBacklightOn
     ldi     ZH, high(WELCOME_STR<<1)        ; Point Z to the welcome string
     ldi     ZL, low(WELCOME_STR<<1)
-    call    LCDPrintZ                       ; Print welcome message
+    call    LCD_ALL                         ; Print welcome message
 
     ; Set the ready flags
     ldi     mpr, $FF
@@ -321,7 +321,7 @@ MAIN:
         ldi     ZL, low(SOME_DATA)
         ld      mpr, Z
 
-        cpi     mpr, start_msg          ; If its the start message
+        cpi     mpr, SIG_READY          ; If its the start message
         breq    BR_RECEIVE_START
 
         rjmp    MAIN
@@ -346,34 +346,184 @@ BR_RECEIVE_START:
 ;***********************************************************
 ;*  Functions and Subroutines
 ;***********************************************************
-LCDPrintZ:
-    ;----------------------------------------------------------------
-    ; Sub:  LCD Print Z 
-    ; Desc: Prints the string that Z is pointing to onto the LCD
-    ;----------------------------------------------------------------
-    push mpr
-    push ZH
-    push ZL
-    push XH
-    push XL
-    push olcnt
 
-    ldi     XH, $01                     ; Point X to the top of the LCD Screen
-    ldi     XL, $00 
-    ldi     olcnt, 32                   ; We want to loop for all 32 characters
- LCD_loop:
-    lpm     mpr, Z+                     ; Load char into mpr
-    st      X+, mpr                     ; Store char in screen
-    dec     olcnt
-    brne    LCD_loop
-    call    LCDWrite                    ; Call write after all chars are set
+;-----------------------------------------------------------
+; Func: 
+; Desc: Assumes Z already points to string.
+;-----------------------------------------------------------
+LCD_ALL:
+    ; Save variables
+    push    mpr
+    push    ilcnt
+    push    XH
+    push    XL
 
-    pop olcnt
-    pop XL
-    pop XH
-    pop ZL
-    pop ZH
-    pop mpr
+    ; Set parameters
+    ldi     XH, $01                     ; Point X to LCD top line
+    ldi     XL, $00                     ; ^
+    ldi     ilcnt, 32                   ; Loop 32 times for 32 characters
+
+ LCD_ALL_LOOP:
+    ; Load in characters
+    lpm     mpr, Z+
+    st      X+, mpr
+    dec     ilcnt
+    brne    LCD_ALL_LOOP
+
+    ; Write to LCD
+    call    LCDWrite
+
+    ; Restore variables
+    pop     XL
+    pop     XH
+    pop     ilcnt
+    pop     mpr
+
+    ; Return from function
+    ret
+
+;-----------------------------------------------------------
+; Func: 
+; Desc: Assumes Z already points to string.
+;-----------------------------------------------------------
+LCD_TOP:
+    ; Save variables
+    push    mpr
+    push    ilcnt
+    push    XH
+    push    XL
+
+    ; Set parameters
+    ldi     XH, $01                     ; Point X to LCD top line
+    ldi     XL, $00                     ; ^
+    ldi     ilcnt, 16                   ; Loop 16 times for 16 characters
+
+ LCD_TOP_LOOP:
+    ; Load in characters
+    lpm     mpr, Z+
+    st      X+, mpr
+    dec     ilcnt
+    brne    LCD_TOP_LOOP
+
+    ; Write to LCD
+    call    LCDWrite
+
+    ; Restore variables
+    pop     XL
+    pop     XH
+    pop     ilcnt
+    pop     mpr
+
+    ; Return from function
+    ret
+    
+;-----------------------------------------------------------
+; Func: 
+; Desc: Assumes Z already points to string.
+;-----------------------------------------------------------
+LCD_BOTTOM:
+    ; Save variables
+    push    mpr
+    push    ilcnt
+    push    XH
+    push    XL
+
+    ; Set parameters
+    ldi     XH, $01                     ; Point X to LCD bottom line
+    ldi     XL, $10                     ; ^
+    ldi     ilcnt, 16                   ; Loop 16 times for 16 characters
+
+ LCD_BOTTOM_LOOP:
+    ; Load in characters
+    lpm     mpr, Z+
+    st      X+, mpr
+    dec     ilcnt
+    brne    LCD_BOTTOM_LOOP
+
+    ; Write to LCD
+    call    LCDWrite
+
+    ; Restore variables
+    pop     XL
+    pop     XH
+    pop     ilcnt
+    pop     mpr
+
+    ; Return from function
+    ret
+
+NEXT_GAME_STAGE:
+    ;-----------------------------------------------------------
+    ; Func: 
+    ; Desc: This is essentially the core function of the game.
+    ;       Game stages change as follows:
+    ;           0 -> 1      0 = IDLE
+    ;           1 -> 2      1 = READY UP
+    ;           2 -> 3      2 = SELECT HAND
+    ;           3 -> 4      3 = REVEAL HANDS
+    ;           4 -> 0      4 = RESULT
+    ;-----------------------------------------------------------
+    ; Save variables
+    push    mpr
+    push    XH
+    push    XL
+
+    ; Branch based on current Game Stage
+    ldi     XH, high(GAME_STAGE)
+    ldi     XL, low(GAME_STAGE)
+    ld      mpr, X
+
+    cpi     mpr, 0
+    breq    NEXT_GAME_STAGE_0
+    cpi     mpr, 1
+    breq    NEXT_GAME_STAGE_1
+    cpi     mpr, 2
+    breq    NEXT_GAME_STAGE_2
+    cpi     mpr, 3
+    breq    NEXT_GAME_STAGE_3
+    cpi     mpr, 4
+    breq    NEXT_GAME_STAGE_4
+
+ NEXT_GAME_STAGE_0:
+    ldi     mpr, 1                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+    ldi     mpr, (0<<INT1 | 1<<INT0)    ; Disable INT1 (PD7) because it's only use was to start the game
+    sts     EIMSK, mpr                  ; ^ INT0 (PD4) is still needed to change HAND_USER
+    call    SEND_READY                  ; Send the ready message via USART1
+    rjmp    NEXT_GAME_STAGE_END
+
+ NEXT_GAME_STAGE_1:
+    ldi     mpr, 2                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+    rjmp    NEXT_GAME_STAGE_END
+    
+ NEXT_GAME_STAGE_2:
+    ldi     mpr, 3                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+    rcall   TIMER
+    rjmp    NEXT_GAME_STAGE_END
+
+ NEXT_GAME_STAGE_3:
+    ldi     mpr, 4                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+    rcall   TIMER
+    rjmp    NEXT_GAME_STAGE_END
+
+ NEXT_GAME_STAGE_4:
+    ldi     mpr, 0                      ; Update GAME_STAGE, so it wraps around and next time it begins at the start
+    st      X, mpr                      ; ^
+    rcall   TIMER
+    ldi     mpr, (1<<INT1 | 1<<INT0)    ; Enable INT3 (PD7) so it can start the game again
+    sts     EIMSK, mpr                  ; ^
+    rjmp    NEXT_GAME_STAGE_END
+
+ NEXT_GAME_STAGE_END:
+    ; Restore variables
+    pop     XL
+    pop     XH
+    pop     mpr
+
+    ; Return from function
     ret
 
 SEND_READY:
@@ -392,7 +542,7 @@ SEND_READY:
     st      Z, mpr                      ; Store a 1 to the ready flag
     ldi     ZH, high(READY_STR<<1)      ; Point Z to the Ready string
     ldi     ZL, low(READY_STR<<1)
-    call    LCDPrintZ
+    call    LCD_ALL
 
     ;-------------- Transmit via USART ----------;
  Ready_Transmit:
@@ -400,7 +550,7 @@ SEND_READY:
     sbrs    mpr, UDRE1                  ; Check the UDRE1 flag
     rjmp    Ready_Transmit              ; Loop back until data register is empty
 
-    ldi     mpr, start_msg              ; Send the start message to the other board
+    ldi     mpr, SIG_READY              ; Send the start message to the other board
     sts     UDR1, mpr
 
     ; Clear the queue
@@ -425,7 +575,7 @@ MESSAGE_RECEIVE:
     
     ;--------- Read message in UDR1 -----------;
     lds     mpr, UDR1               ; Read the incoming data
-    ldi     olcnt, start_msg
+    ldi     olcnt, SIG_READY
     cpse    mpr, olcnt
     rjmp    MR_R2                   ; Skipped if equal
     call    RECEIVE_START           ; Go to receive start
@@ -620,6 +770,8 @@ WINNER_STR:
         .DB "You Win!        "
 LOSER_STR:
         .DB "You Lose!       "
+DRAW_STR:
+        .DB "Draw            "
 ROCK_STR:
         .DB "Rock            "
 PAPER_STR:
@@ -632,15 +784,19 @@ SCISSOR_STR:
 ;***********************************************************
 .dseg
 .org    $0200
-User_Ready_flag:         ; Ready flag to be set when receiving start msg
+User_Ready_flag:        ; Ready flag to be set when receiving start msg
         .byte 1
-Opnt_Ready_flag:         ; Ready flag to be set when receiving start msg
+Opnt_Ready_flag:        ; Ready flag to be set when receiving start msg
         .byte 1
-TCounter:           ; Space for a counting variable
+TCounter:               ; Space for a counting variable
         .byte 1
-Selection:          ; Space for rock/paper/scissor selection
+HAND_USER:              ; User choice: Rock / Paper / Scissors
+        .byte 1
+HAND_OPNT:              ; Opponent choice: Rock / Paper / Scissors
         .byte 1
 SOME_DATA:
+        .byte 1
+GAME_STAGE:             ; Indicates the current stage the game is in
         .byte 1
 
 ;***********************************************************
