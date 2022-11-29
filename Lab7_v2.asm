@@ -73,17 +73,17 @@ INIT:
 	out		SPL, mpr
 
 	; I/O Ports
-		; PORTB for output
-	ldi		mpr, $FF
-	out		DDRB, mpr
-	ldi		mpr, $00
-	out		PORTB, mpr
+		; PORTB
+	ldi		mpr, $FF	; Configure for output
+	out		DDRB, mpr	; ^
+	ldi		mpr, $00	; Output 0
+	out		PORTB, mpr	; ^
 
-		; PORTD for input
-	ldi		mpr, $00
-	out		DDRD, mpr
-	ldi		mpr, $FF
-	out		PORTD, mpr
+		; PORTD
+	ldi     mpr, (1<<PD3 | 0b0000_0000) ; Set Port D pin 3 (TXD1) for output
+    out     DDRD, mpr                   ; Set Port D pin 2 (RXD1) and others for input
+	ldi		mpr, $FF					; Enable pull-up resistors
+	out		PORTD, mpr					; ^
 
 	; LCD
 	call	LCDInit
@@ -91,7 +91,7 @@ INIT:
 
 	; Data Memory Variables
 		; COUNTDOWN
-	ldi		mpr, 0
+	ldi		mpr, 4
 	ldi		XH, high(COUNTDOWN)
 	ldi		XL,	low(COUNTDOWN)
 	st		X, mpr
@@ -169,9 +169,9 @@ INIT:
 	ldi		mpr, (0<<ISC61 | 0<<ISC60)
 	sts		EICRB, mpr
 		; INT1	= 1	= Enable INT1
-		; INT0	= 1	= Enable INT0
-	ldi		mpr, (0<<INT6 | 0<<INT3 | 0<<INT2 | 1<<INT1 | 1<<INT0)
-	sts		EIMSK, mpr
+		; INT0	= 0	= Disable INT0 (for now)
+	ldi		mpr, (0<<INT6 | 0<<INT3 | 0<<INT2 | 1<<INT1 | 0<<INT0)
+	out		EIMSK, mpr
 
 	; Call NEXT_GAME_STAGE once to get it started
 		; Will do GAME_STAGE_0
@@ -233,8 +233,8 @@ NEXT_GAME_STAGE_0:						; IDLE
 	rjmp	NEXT_GAME_STAGE_END
 
 NEXT_GAME_STAGE_1:						; READY UP
-	ldi		mpr, (0<<INT1 | 1<<INT0)	; Disable INT1 (PD7) because it's only use was to start the game
-	sts		EIMSK, mpr					; ^ INT0 (PD4) is still needed to change HAND_USER
+	ldi		mpr, (0<<INT1 | 0<<INT0)	; Disable INT1 (PD7) because it's only use was to start the game
+	out		EIMSK, mpr					; ^ INT0 (PD4) is still needed to change HAND_USER
 	rcall	GAME_STAGE_1				; Do stuff for this stage
 	ldi		mpr, 2						; Update GAME_STAGE
 	st		X, mpr						; ^
@@ -256,11 +256,16 @@ NEXT_GAME_STAGE_4:						; RESULT
 	rcall	GAME_STAGE_4				; Do stuff for this stage
 	ldi		mpr, 0						; Update GAME_STAGE, so it wraps around and next time it begins at the start
 	st		X, mpr						; ^
-	ldi		mpr, (1<<INT1 | 1<<INT0)	; Enable INT1 (PD7) so it can start the game again
-	sts		EIMSK, mpr					; ^
+	ldi		mpr, (1<<INT1 | 0<<INT0)	; Enable INT1 (PD7) so it can start the game again
+	out		EIMSK, mpr					; ^
 	rjmp	NEXT_GAME_STAGE_END
 
 NEXT_GAME_STAGE_END:
+	; Clear interrupt queue
+	rcall	BUSY_WAIT
+	ldi		mpr, 0b1111_1111
+	out		EIFR, mpr
+
 	; Restore variables
 	pop		XL
 	pop		XH
@@ -327,8 +332,9 @@ GAME_STAGE_2:
 	; Start 6 second timer
 	rcall	TIMER
 
-	; Enable Global Interrupts so timer can work and hand can be changed
-	sei
+	; INT0	= 1	= Enable INT0 so hand can be changed
+	ldi		mpr, (1<<INT0)
+	out		EIMSK, mpr
 
 	; Print to LCD
 	ldi		ZH, high(STRING_CHOOSE_HAND<<1)
@@ -363,9 +369,6 @@ GAME_STAGE_3:
 
 	; Start 6 second timer
 	rcall	TIMER
-
-	; Enable Global Interrupts so timer can work
-	sei
 	
 	; Branch based on Opponent Hand
 	ldi		XH, high(HAND_OPNT)
@@ -426,9 +429,6 @@ GAME_STAGE_4:
 	; Start 6 second timer
 	rcall	TIMER
 
-	; Enable Global Interrupts so timer can work
-	sei
-
 	; Print to LCD
 		; Should do some logic to deicde actaul result
 	ldi		ZH, high(STRING_DRAW<<1)
@@ -486,44 +486,49 @@ TIMER:
 TIMER_4:						; Start timer
 	ldi		mpr, (1<<TOIE1)		; TOIE1	= 1	= Overflow Interrupt Enabled
 	sts		TIMSK1, mpr			; ^
-	ldi		mpr, 4				; Update COUNTDOWN
+	ldi		mpr, 3				; Update COUNTDOWN
 	st		X, mpr				; ^
 	in		mpr, PINB			; Update LEDs
-	andi	mpr, 0b1111_1111	; ^
+	andi	mpr, 0b0000_1111	; ^
+	ori		mpr, 0b1111_0000	; ^
 	out		PORTB, mpr			; ^
 	rjmp	TIMER_END
 
 TIMER_3:
-	ldi		mpr, 3				; Update COUNTDOWN
+	ldi		mpr, 2				; Update COUNTDOWN
 	st		X, mpr				; ^
 	in		mpr, PINB			; Update LEDs
-	andi	mpr, 0b0111_1111	; ^
+	andi	mpr, 0b0000_1111	; ^
+	ori		mpr, 0b0111_0000	; ^
 	out		PORTB, mpr			; ^
 	rjmp	TIMER_END
 
 TIMER_2:
-	ldi		mpr, 2				; Update COUNTDOWN
+	ldi		mpr, 1				; Update COUNTDOWN
 	st		X, mpr				; ^
 	in		mpr, PINB			; Update LEDs
-	andi	mpr, 0b0011_1111	; ^
+	andi	mpr, 0b0000_1111	; ^
+	ori		mpr, 0b0011_0000	; ^
 	out		PORTB, mpr			; ^
 	rjmp	TIMER_END
 
 TIMER_1:
-	ldi		mpr, 1				; Update COUNTDOWN
+	ldi		mpr, 0				; Update COUNTDOWN
 	st		X, mpr				; ^
 	in		mpr, PINB			; Update LEDs
-	andi	mpr, 0b0001_1111	; ^
+	andi	mpr, 0b0000_1111	; ^
+	ori		mpr, 0b0001_0000	; ^
 	out		PORTB, mpr			; ^
 	rjmp	TIMER_END
 
 TIMER_0:						; End timer
 	ldi		mpr, (0<<TOIE1)		; TOIE1	= 0	= Overflow Interrupt Disabled
 	sts		TIMSK1, mpr			; ^
-	ldi		mpr, 0				; Update COUNTDOWN, so it wraps around and next time it begins at the start
+	ldi		mpr, 4				; Update COUNTDOWN, so it wraps around and next time it begins at the start
 	st		X, mpr				; ^
-	in		mpr, PORTB			; Update LEDs
+	in		mpr, PINB			; Update LEDs
 	andi	mpr, 0b0000_1111	; ^
+	ori		mpr, 0b0000_0000	; ^
 	out		PORTB, mpr			; ^
 	rcall	NEXT_GAME_STAGE		; Update GAME_STAGE
 	rjmp	TIMER_END
@@ -656,7 +661,7 @@ BUSY_WAIT:
 	push    ilcnt
 	push	olcnt
 	
-	ldi		mpr, 20
+	ldi		mpr, 15
 BUSY_WAIT_LOOP:
 	ldi     olcnt, 224		; Load olcnt register
 BUSY_WAIT_OLOOP:
@@ -770,9 +775,9 @@ LCD_TEST:
 STRING_IDLE:
 	.DB		"Welcome!        Please press PD7"
 STRING_READY_UP:
-	.DB		"Ready. Waiting  for the opponent"
+	.DB		"Ready. Waiting  for opponent    "
 STRING_CHOOSE_HAND:
-	.DB		"Game start      "
+	.DB		"Choose your hand"
 STRING_ROCK:
 	.DB		"Rock            "
 STRING_PAPER:
