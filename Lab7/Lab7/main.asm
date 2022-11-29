@@ -490,6 +490,7 @@ NEXT_GAME_STAGE:
     breq    NEXT_GAME_STAGE_4
     rjmp    NEXT_GAME_STAGE_END         ; In case checks are skipped
 
+    ; Send ready message          -- waiting to send
  NEXT_GAME_STAGE_0:
     ldi     mpr, 1                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
@@ -497,24 +498,24 @@ NEXT_GAME_STAGE:
     sts     EIMSK, mpr                  ; ^ INT0 (PD4) is still needed to change HAND_USER
     call    SEND_READY                  ; Send the ready message via USART1
     rjmp    NEXT_GAME_STAGE_END
-
+    ; After sending ready message -- idle
  NEXT_GAME_STAGE_1:
     ldi     mpr, 2                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
     rjmp    NEXT_GAME_STAGE_END
-    
+    ; After receiving the other ready message -- game start
  NEXT_GAME_STAGE_2:
     ldi     mpr, 3                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    rcall   TIMER_START
+    rcall   TIMER_START                 
     rjmp    NEXT_GAME_STAGE_END
-
+    ; After 6 second timer ends on selecting the hand
  NEXT_GAME_STAGE_3:
     ldi     mpr, 4                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    rcall   TIMER_START
+    rcall   TIMER_START                 ; Display both hands
     rjmp    NEXT_GAME_STAGE_END
-
+    ; Show who won
  NEXT_GAME_STAGE_4:
     ldi     mpr, 0                      ; Update GAME_STAGE, so it wraps around and next time it begins at the start
     st      X, mpr                      ; ^
