@@ -24,7 +24,10 @@
 .def	olcnt	= r18			; Outer Loop CouNT
 
 .equ    SIG_READY		= 0b1111_1111	; Signal for ready to start game
-.equ	SIG_NOT_READY	= 0b0000_0000	;
+.equ	SIG_NOT_READY	= 0b0000_0000	; Signal for not ready to start game
+.equ	SIG_ROCK		= 0b0000_0001	; Signal for Rock
+.equ	SIG_PAPER		= 0b0000_0010	; Signal for Paper
+.equ	SIG_SCISSORS	= 0b0000_0011	; Signal for Scissors
 
 ;***********************************************************
 ;*  Start of Code Segment
@@ -41,8 +44,8 @@
 		;rcall
 		reti
 
-.org	$0008					; INT3, PD7, start game
-		rcall	NEXT_GAME_STAGE	
+.org	$0004					; INT1, PD7, start game
+		rcall	NEXT_GAME_STAGE
 		reti
 
 .org	$0028					; Timer/Counter1 Overflow
@@ -86,14 +89,35 @@ INIT:
 	call	LCDInit
 	call	LCDBackLightOn
 
-	; Ready Flags
-	ldi		mpr, SIG_NOT_READY
-	ldi		XH, high(READY_USER)
-	ldi		XL,	low(READY_USER)
+	; Data Memory Variables
+		; COUNTDOWN
+	ldi		mpr, 0
+	ldi		XH, high(COUNTDOWN)
+	ldi		XL,	low(COUNTDOWN)
 	st		X, mpr
+
+		; GAME_STAGE
+	ldi		mpr, 0
+	ldi		XH, high(GAME_STAGE)
+	ldi		XL,	low(GAME_STAGE)
+	st		X, mpr
+
+		; HANDs
+	ldi		mpr, SIG_ROCK
+	ldi		XH, high(HAND_OPNT)
+	ldi		XL,	low(HAND_OPNT)
+	st		X, mpr
+	ldi		XH, high(HAND_USER)
+	ldi		XL,	low(HAND_USER)
+	st		X, mpr
+
+		; READY Flags
 	ldi		mpr, SIG_NOT_READY
 	ldi		XH, high(READY_OPNT)
 	ldi		XL,	low(READY_OPNT)
+	st		X, mpr
+	ldi		XH, high(READY_USER)
+	ldi		XL,	low(READY_USER)
 	st		X, mpr
 
 	; USART1
@@ -136,29 +160,22 @@ INIT:
 	sts		TCCR1B, mpr
 	ldi		mpr, $00		; Not important
 	sts		TCCR1C, mpr		; ^
-	
-		; Set starting value
-			; Value = Max + 1 - ( Delay * clk ) / Prescale = 18661 = $48E5
-				; Max	= $FFFF = 65535
-				; Delay = 1.5s
-				; clk	= 8MHz
-				; Prescale	= 256
-	ldi		mpr, $48		; Write to high byte first
-	sts		TCNT1H, mpr		; ^
-	ldi		mpr, $E5		; Write to low byte second
-	sts		TCNT1L, mpr		; ^
 
 	; Interrupts
-		; ISC3[1:0]	= 10	= Trigger INT3 on Falling Edge
+		; ISC1[1:0]	= 10	= Trigger INT1 on Falling Edge
 		; ISC0[1:0]	= 10	= Trigger INT0 on Falling Edge
-	ldi		mpr, (1<<ISC31 | 0<<ISC30 | 0<<ISC21 | 0<<ISC20 | 0<<ISC11 | 0<<ISC10 | 1<<ISC01 | 0<<ISC00)
+	ldi		mpr, (1<<ISC31 | 0<<ISC30 | 1<<ISC21 | 0<<ISC20 | 1<<ISC11 | 0<<ISC10 | 1<<ISC01 | 0<<ISC00)
 	sts		EICRA, mpr
 	ldi		mpr, (0<<ISC61 | 0<<ISC60)
 	sts		EICRB, mpr
-		; INT3	= 1	= Enable INT3
+		; INT1	= 1	= Enable INT1
 		; INT0	= 1	= Enable INT0
-	ldi		mpr, (0<<INT6 | 1<<INT3 | 0<<INT2 | 0<<INT1 | 1<<INT0)
+	ldi		mpr, (0<<INT6 | 0<<INT3 | 0<<INT2 | 1<<INT1 | 1<<INT0)
 	sts		EIMSK, mpr
+
+	; Call NEXT_GAME_STAGE once to get it started
+		; Will do GAME_STAGE_0
+	rcall	NEXT_GAME_STAGE
 
 	;Enable global interrupts
 	sei
@@ -168,9 +185,6 @@ INIT:
 ;***********************************************************
 MAIN:
 	; Loops indefinetely. Wait for interrupts.
-
-	call	LCD_TEST
-
 	rjmp	MAIN
 
 ;***********************************************************
@@ -209,36 +223,41 @@ NEXT_GAME_STAGE:
 	cpi		mpr, 4
 	breq	NEXT_GAME_STAGE_4
 
-NEXT_GAME_STAGE_0:
-	ldi		mpr, 1					; Update GAME_STAGE
-	st		X, mpr					; ^
-	ldi		mpr, (0<<INT6 | 0<<INT3 | 0<<INT2 | 0<<INT1 | 1<<INT0)	; Disable INT3 (PD7) because it's only use was to start the game
-	sts		EIMSK, mpr												; ^ INT1 (PD4) is still needed to change HAND_USER
+	; If no compare match, branch to end
 	rjmp	NEXT_GAME_STAGE_END
 
-NEXT_GAME_STAGE_1:
-	ldi		mpr, 2					; Update GAME_STAGE
-	st		X, mpr					; ^
+NEXT_GAME_STAGE_0:						; IDLE
+	rcall	GAME_STAGE_0				; Do stuff for this stage
+	ldi		mpr, 1						; Update GAME_STAGE
+	st		X, mpr						; ^
+	rjmp	NEXT_GAME_STAGE_END
+
+NEXT_GAME_STAGE_1:						; READY UP
+	ldi		mpr, (0<<INT1 | 1<<INT0)	; Disable INT1 (PD7) because it's only use was to start the game
+	sts		EIMSK, mpr					; ^ INT0 (PD4) is still needed to change HAND_USER
+	rcall	GAME_STAGE_1				; Do stuff for this stage
+	ldi		mpr, 2						; Update GAME_STAGE
+	st		X, mpr						; ^
 	rjmp	NEXT_GAME_STAGE_END
 	
-NEXT_GAME_STAGE_2:
-	ldi		mpr, 3					; Update GAME_STAGE
-	st		X, mpr					; ^
-	rcall	TIMER
+NEXT_GAME_STAGE_2:						; CHOOSE HAND
+	rcall	GAME_STAGE_2				; Do stuff for this stage
+	ldi		mpr, 3						; Update GAME_STAGE
+	st		X, mpr						; ^
 	rjmp	NEXT_GAME_STAGE_END
 
-NEXT_GAME_STAGE_3:
-	ldi		mpr, 4					; Update GAME_STAGE
-	st		X, mpr					; ^
-	rcall	TIMER
+NEXT_GAME_STAGE_3:						; REVEAL HANDS
+	rcall	GAME_STAGE_3				; Do stuff for this stage
+	ldi		mpr, 4						; Update GAME_STAGE
+	st		X, mpr						; ^
 	rjmp	NEXT_GAME_STAGE_END
 
-NEXT_GAME_STAGE_4:
-	ldi		mpr, 0					; Update GAME_STAGE, so it wraps around and next time it begins at the start
-	st		X, mpr					; ^
-	rcall	TIMER
-	ldi		mpr, (0<<INT6 | 1<<INT3 | 0<<INT2 | 0<<INT1 | 1<<INT0)	; Enable INT3 (PD7) so it can start the game again
-	sts		EIMSK, mpr												; ^
+NEXT_GAME_STAGE_4:						; RESULT
+	rcall	GAME_STAGE_4				; Do stuff for this stage
+	ldi		mpr, 0						; Update GAME_STAGE, so it wraps around and next time it begins at the start
+	st		X, mpr						; ^
+	ldi		mpr, (1<<INT1 | 1<<INT0)	; Enable INT1 (PD7) so it can start the game again
+	sts		EIMSK, mpr					; ^
 	rjmp	NEXT_GAME_STAGE_END
 
 NEXT_GAME_STAGE_END:
@@ -252,76 +271,176 @@ NEXT_GAME_STAGE_END:
 
 ;-----------------------------------------------------------
 ; Func:	
-; Desc:	
+; Desc:	GAME_STAGE_0 = IDLE
 ;-----------------------------------------------------------
-;FUNC:
+GAME_STAGE_0:
+	; Save variables
+	push	ZH
+	push	ZL
+
+	; Print to LCD
+	ldi		ZH, high(STRING_IDLE<<1)
+	ldi		ZL, low(STRING_IDLE<<1)
+	rcall	LCD_ALL
+
+	; Restore variables
+	pop		ZL
+	pop		ZH
+
+	; Return from function
+	ret
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	GAME_STAGE_1 = READY UP
+;-----------------------------------------------------------
+GAME_STAGE_1:
+	; Save variables
+	push	ZH
+	push	ZL
+
+	; Print to LCD
+	ldi		ZH, high(STRING_READY_UP<<1)
+	ldi		ZL, low(STRING_READY_UP<<1)
+	rcall	LCD_ALL
+
+	; Send ready message to other board
+		; For now just start timer to progress to next game stage
+	rcall	TIMER
+
+	; Restore variables
+	pop		ZL
+	pop		ZH
+
+	; Return from function
+	ret
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	GAME_STAGE_2 = CHOOSE HAND
+;-----------------------------------------------------------
+GAME_STAGE_2:
+	; Save variables
+	push	ZH
+	push	ZL
+
+	; Start 6 second timer
+	rcall	TIMER
+
+	; Enable Global Interrupts so timer can work and hand can be changed
+	sei
+
+	; Print to LCD
+	ldi		ZH, high(STRING_CHOOSE_HAND<<1)
+	ldi		ZL, low(STRING_CHOOSE_HAND<<1)
+	rcall	LCD_TOP
+
+	; Print to LCD
+		; ROCK is the default choice
+		; ___ function handles choosing hand
+	ldi		ZH, high(STRING_ROCK<<1)
+	ldi		ZL, low(STRING_ROCK<<1)
+	rcall	LCD_BOTTOM
+
+	; Restore variables
+	pop		ZL
+	pop		ZH
+
+	; Return from function
+	ret
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	GAME_STAGE_3 = REVEAL HANDS
+;-----------------------------------------------------------
+GAME_STAGE_3:
 	; Save variables
 	push	mpr
+	push	XH
+	push	XL
+	push	ZH
+	push	ZL
 
-	; Func
+	; Start 6 second timer
+	rcall	TIMER
+
+	; Enable Global Interrupts so timer can work
+	sei
 	
-;-----------------------------------------------------------
-; Func:	
-; Desc:	
-;-----------------------------------------------------------
-;FUNC:
-	; Save variables
-	push	mpr
-
-	; Func
-
-	; Restore variables
-	pop		mpr
-
-	; Return from function
-	ret
-
-;-----------------------------------------------------------
-; Func:	
-; Desc:	
-;-----------------------------------------------------------
-;FUNC:
-	; Save variables
-	push	mpr
-
-	; Func
-
-	; Restore variables
-	pop		mpr
-
-	; Return from function
-	ret
-
-	; Restore variables
-	pop		mpr
-
-	; Return from function
-	ret
-
-;-----------------------------------------------------------
-; Func:	
-; Desc:	
-;-----------------------------------------------------------
-;FUNC:
-	; Save variables
-	push	mpr
-
-	; Func
-
-	; Restore variables
-	pop		mpr
-
-	; Return from function
-	ret
-
-;-----------------------------------------------------------
-; Func:	
-; Desc:	
-;-----------------------------------------------------------
-TIMER_START:
-
+	; Branch based on Opponent Hand
+	ldi		XH, high(HAND_OPNT)
+	ldi		XL, low(HAND_OPNT)
+	ld		mpr, X
 	
-	
+	cpi		mpr, 1
+	breq	GAME_STAGE_3_ROCK
+	cpi		mpr, 2
+	breq	GAME_STAGE_3_PAPER
+	cpi		mpr, 3
+	breq	GAME_STAGE_3_SCISSORS
+
+	; If no compare match, branch to end
+	rjmp	GAME_STAGE_3_END
+
+GAME_STAGE_3_ROCK:
+	; Print to LCD
+	ldi		ZH, high(STRING_ROCK<<1)
+	ldi		ZL, low(STRING_ROCK<<1)
+	rcall	LCD_TOP
+	rjmp	GAME_STAGE_3_END
+
+GAME_STAGE_3_PAPER:
+	; Print to LCD
+	ldi		ZH, high(STRING_PAPER<<1)
+	ldi		ZL, low(STRING_PAPER<<1)
+	rcall	LCD_TOP
+	rjmp	GAME_STAGE_3_END
+
+GAME_STAGE_3_SCISSORS:
+	; Print to LCD
+	ldi		ZH, high(STRING_SCISSORS<<1)
+	ldi		ZL, low(STRING_SCISSORS<<1)
+	rcall	LCD_TOP
+	rjmp	GAME_STAGE_3_END
+
+GAME_STAGE_3_END:
+	; Restore variables
+	pop		ZL
+	pop		ZH
+	pop		XL
+	pop		XH
+	pop		mpr
+
+	; Return from function
+	ret
+
+;-----------------------------------------------------------
+; Func:	
+; Desc:	GAME_STAGE_4 = RESULT
+;-----------------------------------------------------------
+GAME_STAGE_4:
+	; Save variables
+	push	ZH
+	push	ZL
+
+	; Start 6 second timer
+	rcall	TIMER
+
+	; Enable Global Interrupts so timer can work
+	sei
+
+	; Print to LCD
+		; Should do some logic to deicde actaul result
+	ldi		ZH, high(STRING_DRAW<<1)
+	ldi		ZL, low(STRING_DRAW<<1)
+	rcall	LCD_TOP
+
+	; Restore variables
+	pop		ZL
+	pop		ZH
+
+	; Return from function
+	ret
 
 ;-----------------------------------------------------------
 ; Func:	
@@ -332,6 +451,17 @@ TIMER:
 	push	mpr
 	push	XH
 	push	XL
+
+	; Set/Reset starting value
+		; Value = Max + 1 - ( Delay * clk ) / Prescale = 18661 = $48E5
+			; Max	= $FFFF = 65535
+			; Delay = 1.5s
+			; clk	= 8MHz
+			; Prescale	= 256
+	ldi		mpr, $48		; Write to high byte first
+	sts		TCNT1H, mpr		; ^
+	ldi		mpr, $E5		; Write to low byte second
+	sts		TCNT1L, mpr		; ^
 
 	; Load in COUNTDOWN
 	ldi		XH, high(COUNTDOWN)
@@ -354,47 +484,47 @@ TIMER:
 	rjmp	TIMER_END
 
 TIMER_4:						; Start timer
-	ldi		mpr, 3				; Update COUNTDOWN
+	ldi		mpr, (1<<TOIE1)		; TOIE1	= 1	= Overflow Interrupt Enabled
+	sts		TIMSK1, mpr			; ^
+	ldi		mpr, 4				; Update COUNTDOWN
 	st		X, mpr				; ^
-	in		mpr, PORTB			; Update LEDs
+	in		mpr, PINB			; Update LEDs
 	andi	mpr, 0b1111_1111	; ^
 	out		PORTB, mpr			; ^
-	ldi		mpr, (0<<ICIE1 | 0<<OCIE1C | 0<<OCIE1B | 0<<OCIE1A | 1<<TOIE1)	; TOIE1	= 1	= Overflow Interrupt Enabled
-	sts		TIMSK1, mpr														; ^
 	rjmp	TIMER_END
 
 TIMER_3:
-	ldi		mpr, 2				; Update COUNTDOWN
+	ldi		mpr, 3				; Update COUNTDOWN
 	st		X, mpr				; ^
-	in		mpr, PORTB			; Update LEDs
+	in		mpr, PINB			; Update LEDs
 	andi	mpr, 0b0111_1111	; ^
 	out		PORTB, mpr			; ^
 	rjmp	TIMER_END
 
 TIMER_2:
-	ldi		mpr, 1				; Update COUNTDOWN
+	ldi		mpr, 2				; Update COUNTDOWN
 	st		X, mpr				; ^
-	in		mpr, PORTB			; Update LEDs
+	in		mpr, PINB			; Update LEDs
 	andi	mpr, 0b0011_1111	; ^
 	out		PORTB, mpr			; ^
 	rjmp	TIMER_END
 
 TIMER_1:
-	ldi		mpr, 0				; Update COUNTDOWN
+	ldi		mpr, 1				; Update COUNTDOWN
 	st		X, mpr				; ^
-	in		mpr, PORTB			; Update LEDs
+	in		mpr, PINB			; Update LEDs
 	andi	mpr, 0b0001_1111	; ^
 	out		PORTB, mpr			; ^
 	rjmp	TIMER_END
 
 TIMER_0:						; End timer
-	ldi		mpr, 4				; Update COUNTDOWN, so it wraps around and next time it begins at the start
+	ldi		mpr, (0<<TOIE1)		; TOIE1	= 0	= Overflow Interrupt Disabled
+	sts		TIMSK1, mpr			; ^
+	ldi		mpr, 0				; Update COUNTDOWN, so it wraps around and next time it begins at the start
 	st		X, mpr				; ^
 	in		mpr, PORTB			; Update LEDs
 	andi	mpr, 0b0000_1111	; ^
 	out		PORTB, mpr			; ^
-	ldi		mpr, (0<<ICIE1 | 0<<OCIE1C | 0<<OCIE1B | 0<<OCIE1A | 0<<TOIE1)	; TOIE1	= 0	= Overflow Interrupt Disabled
-	sts		TIMSK1, mpr														; ^
 	rcall	NEXT_GAME_STAGE		; Update GAME_STAGE
 	rjmp	TIMER_END
 
@@ -565,17 +695,17 @@ LCD_TEST:
 	; Wait
 	call	BUSY_WAIT
 
-	; Test STRING_READY
-	ldi		ZH, high(STRING_READY<<1)	; Point Z to string
-	ldi		ZL, low(STRING_READY<<1)	; ^
+	; Test STRING_READY_UP
+	ldi		ZH, high(STRING_READY_UP<<1)	; Point Z to string
+	ldi		ZL, low(STRING_READY_UP<<1)	; ^
 	call	LCD_ALL
 
 	; Wait
 	call	BUSY_WAIT
 
-	; Test STRING_BEGIN
-	ldi		ZH, high(STRING_BEGIN<<1)	; Point Z to string
-	ldi		ZL, low(STRING_BEGIN<<1)	; ^
+	; Test STRING_CHOOSE_HAND
+	ldi		ZH, high(STRING_CHOOSE_HAND<<1)	; Point Z to string
+	ldi		ZL, low(STRING_CHOOSE_HAND<<1)	; ^
 	call	LCD_TOP
 
 	; Test STRING_ROCK
@@ -639,9 +769,9 @@ LCD_TEST:
 ;***********************************************************
 STRING_IDLE:
 	.DB		"Welcome!        Please press PD7"
-STRING_READY:
+STRING_READY_UP:
 	.DB		"Ready. Waiting  for the opponent"
-STRING_BEGIN:
+STRING_CHOOSE_HAND:
 	.DB		"Game start      "
 STRING_ROCK:
 	.DB		"Rock            "
@@ -662,17 +792,17 @@ STRING_DRAW:
 .dseg
 .org	$0200		; Idk why this number, seems big enough
 
+COUNTDOWN:			; Countdown value for timer loop and LED display
+	.byte 1
 GAME_STAGE:			; Indicates the current stage the game is in
-	.byte 1
-READY_USER:			; User ready
-	.byte 1
-READY_OPNT:			; Opponent ready
-	.byte 1
-HAND_USER:			; User choice: Rock / Paper / Scissors
 	.byte 1
 HAND_OPNT:			; Opponent choice: Rock / Paper / Scissors
 	.byte 1
-COUNTDOWN:			; Countdown value for timer loop and LED display
+HAND_USER:			; User choice: Rock / Paper / Scissors
+	.byte 1
+READY_OPNT:			; Opponent ready
+	.byte 1
+READY_USER:			; User ready
 	.byte 1
 
 ;***********************************************************
