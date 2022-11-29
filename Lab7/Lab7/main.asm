@@ -290,9 +290,14 @@ INIT:
     st      Z, mpr
     ; Set the SOME_DATA register
     ldi     mpr, $FF
-    ldi     ZH, high(SOME_DATA)       ; Load both ready flags
+    ldi     ZH, high(SOME_DATA)             ; Load both ready flags
     ldi     ZL, low(SOME_DATA)
     st      Z, mpr 
+    ; Set Game stage to be 0
+    ldi     mpr, $00
+    ldi     ZH, high(GAME_STAGE)
+    ldi     ZL, low(GAME_STAGE)
+    st      Z, mpr
    
 
     ; External Interrupts
@@ -483,6 +488,7 @@ NEXT_GAME_STAGE:
     breq    NEXT_GAME_STAGE_3
     cpi     mpr, 4
     breq    NEXT_GAME_STAGE_4
+    rjmp    NEXT_GAME_STAGE_END         ; In case checks are skipped
 
  NEXT_GAME_STAGE_0:
     ldi     mpr, 1                      ; Update GAME_STAGE
@@ -500,29 +506,35 @@ NEXT_GAME_STAGE:
  NEXT_GAME_STAGE_2:
     ldi     mpr, 3                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    rcall   TIMER
+    rcall   TIMER_START
     rjmp    NEXT_GAME_STAGE_END
 
  NEXT_GAME_STAGE_3:
     ldi     mpr, 4                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    rcall   TIMER
+    rcall   TIMER_START
     rjmp    NEXT_GAME_STAGE_END
 
  NEXT_GAME_STAGE_4:
     ldi     mpr, 0                      ; Update GAME_STAGE, so it wraps around and next time it begins at the start
     st      X, mpr                      ; ^
-    rcall   TIMER
+    rcall   TIMER_START
     ldi     mpr, (1<<INT1 | 1<<INT0)    ; Enable INT3 (PD7) so it can start the game again
     sts     EIMSK, mpr                  ; ^
     rjmp    NEXT_GAME_STAGE_END
 
  NEXT_GAME_STAGE_END:
+
+    ldi     waitcnt, WTime              ; Wait for 15 ms to clear interrupt queue
+    rcall   Wait
+
+    ldi     mpr, 0b0000_0011            ; Clear interrupt queue
+    out     EIFR, mpr
+
     ; Restore variables
     pop     XL
     pop     XH
     pop     mpr
-
     ; Return from function
     ret
 
@@ -607,8 +619,6 @@ RECEIVE_START:
     pop mpr
     ret
 
-
-
 LED_TOGGLE:
     push  waitcnt
     push  mpr
@@ -636,6 +646,17 @@ START_GAME:
     ldi     ZH, high(Opnt_Ready_flag)
     ldi     ZL, low(Opnt_Ready_flag)
     st      Z, mpr
+    call    TIMER_START
+
+    pop ZL
+    pop ZH
+    pop mpr
+    ret
+
+TIMER_START:
+    push mpr
+    push ZH
+    push ZL
 
     ; Initialize counter var to be 4
     ldi     mpr, 4
@@ -660,7 +681,6 @@ START_GAME:
     pop mpr
     ret
 
-
 TRANSMIT_CHECK:
     ;----------------------------------------------------------------
     ; Sub:  Transmit Check
@@ -682,7 +702,7 @@ TRANSMIT_CHECK:
     ld      ilcnt, X
     cpse    mpr, ilcnt                      ; Compare the ready flags
     rjmp    TC_END                          ; If they aren't equal jump to end
-    call    START_GAME                      ; else start the game
+    call    NEXT_GAME_STAGE                 ; else increment game stage
 
  TC_END:
     ; Other checks
@@ -721,6 +741,13 @@ UPDATE_TIMER:
  OFF: 
     ldi     mpr, (0<<TOIE1)     ; Clear TOV01 enable
     sts     TIMSK1, mpr
+    
+    ldi     ZH, high(GAME_STAGE); Check to see if we are calling from GS 4
+    ldi     ZL, low(GAME_STAGE)
+    ld      mpr, Z
+    cpi     mpr, 0
+    breq    END                 ; If it is Game_Stage 4 then skip to end
+    call    NEXT_GAME_STAGE
 
  END:
     pop ZL                      ; Regular return stuff
