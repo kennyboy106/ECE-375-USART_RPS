@@ -19,15 +19,15 @@
 ;***********************************************************
 ;*  Internal Register Definitions and Constants
 ;***********************************************************
-.def    mpr		= r16			; Multi-Purpose Register
-.def	ilcnt	= r17			; Inner Loop CouNT
-.def	olcnt	= r18			; Outer Loop CouNT
+.def    mpr		= r16		; Multi-Purpose Register
+.def	ilcnt	= r17		; Inner Loop CouNT
+.def	olcnt	= r18		; Outer Loop CouNT
 
-.equ    SIG_READY		= 0b1111_1111	; Signal for ready to start game
-.equ	SIG_NOT_READY	= 0b0000_0000	; Signal for not ready to start game
-.equ	SIG_ROCK		= 0b0000_0001	; Signal for Rock
-.equ	SIG_PAPER		= 0b0000_0010	; Signal for Paper
-.equ	SIG_SCISSORS	= 0b0000_0011	; Signal for Scissors
+.equ    SIGNAL_READY		= 0b1111_1111	; Signal for ready to start game
+.equ	SIGNAL_NOT_READY	= 0b0000_0000	; Signal for not ready to start game
+.equ	SIGNAL_ROCK			= 0b0000_0001	; Signal for Rock
+.equ	SIGNAL_PAPER		= 0b0000_0010	; Signal for Paper
+.equ	SIGNAL_SCISSORS		= 0b0000_0011	; Signal for Scissors
 
 ;***********************************************************
 ;*  Start of Code Segment
@@ -38,7 +38,7 @@
 ;*  Interrupt Vectors
 ;***********************************************************
 .org    $0000                   ; Beginning of Interrupt Vectors
-	    rjmp    INIT            ; Reset interrupt
+		rjmp    INIT            ; Reset interrupt
 
 .org	$0002					; INT0, PD4, cycle hand
 		rcall	CYCLE_HAND
@@ -81,7 +81,7 @@ INIT:
 
 		; PORTD
 	ldi     mpr, (1<<PD3 | 0b0000_0000) ; Set Port D pin 3 (TXD1) for output
-    out     DDRD, mpr                   ; Set Port D pin 2 (RXD1) and others for input
+	out     DDRD, mpr                   ; Set Port D pin 2 (RXD1) and others for input
 	ldi		mpr, $FF					; Enable pull-up resistors
 	out		PORTD, mpr					; ^
 
@@ -103,7 +103,7 @@ INIT:
 	st		X, mpr
 
 		; HANDs
-	ldi		mpr, SIG_ROCK
+	ldi		mpr, SIGNAL_ROCK
 	ldi		XH, high(HAND_OPNT)
 	ldi		XL,	low(HAND_OPNT)
 	st		X, mpr
@@ -112,7 +112,7 @@ INIT:
 	st		X, mpr
 
 		; READY Flags
-	ldi		mpr, SIG_NOT_READY
+	ldi		mpr, SIGNAL_NOT_READY
 	ldi		XH, high(READY_OPNT)
 	ldi		XL,	low(READY_OPNT)
 	st		X, mpr
@@ -431,7 +431,7 @@ GAME_STAGE_4:
 	; Save variables
 	push	mpr
 	push	ilcnt
-	push	ZH
+	push	XH
 	push	XL
 	push	ZH
 	push	ZL
@@ -608,7 +608,7 @@ TIMER_END:
 
 ;-----------------------------------------------------------
 ; Func:	
-; Desc:	Assumes Z already points to string.
+; Desc:
 ;-----------------------------------------------------------
 CYCLE_HAND:
 ; Save variables
@@ -624,19 +624,19 @@ CYCLE_HAND:
 	ld		mpr, X
 
 	; Change hand based on current hand
-	cpi		mpr, SIG_ROCK
+	cpi		mpr, SIGNAL_ROCK
 	breq	CYCLE_HAND_PAPER
-	cpi		mpr, SIG_PAPER
+	cpi		mpr, SIGNAL_PAPER
 	breq	CYCLE_HAND_SCISSORS
-	cpi		mpr, SIG_SCISSORS
+	cpi		mpr, SIGNAL_SCISSORS
 	breq	CYCLE_HAND_ROCK
 
 	; If no compare match, jump to end
 	rjmp	CYCLE_HAND_END
 
-CYCLE_HAND_ROCK:
+CYCLE_HAND_ROCK:							; Change to ROCK
 	; Change Data Memory variable HAND_USER
-	ldi		mpr, SIG_ROCK
+	ldi		mpr, SIGNAL_ROCK
 	st		X, mpr
 
 	; Print to LCD
@@ -647,9 +647,9 @@ CYCLE_HAND_ROCK:
 	; Jump to end
 	rjmp	CYCLE_HAND_END
 
-CYCLE_HAND_PAPER:
+CYCLE_HAND_PAPER:							; Change to PAPER
 	; Change Data Memory variable HAND_USER
-	ldi		mpr, SIG_PAPER
+	ldi		mpr, SIGNAL_PAPER
 	st		X, mpr
 
 	; Print to LCD
@@ -660,9 +660,9 @@ CYCLE_HAND_PAPER:
 	; Jump to end
 	rjmp	CYCLE_HAND_END
 
-CYCLE_HAND_SCISSORS:
+CYCLE_HAND_SCISSORS:						; Change to SCISSORS
 	; Change Data Memory variable HAND_USER
-	ldi		mpr, SIG_SCISSORS
+	ldi		mpr, SIGNAL_SCISSORS
 	st		X, mpr
 
 	; Print to LCD
@@ -807,9 +807,6 @@ BUSY_WAIT:
 	push    mpr
 	push    ilcnt
 	push	olcnt
-
-	; Enable global interrupts
-	sei
 	
 	ldi		mpr, 15
 BUSY_WAIT_LOOP:
@@ -829,8 +826,177 @@ BUSY_WAIT_ILOOP:
 	pop		ilcnt
 	pop		mpr
 
-        ; Return from subroutine
-        ret
+	; Return from function
+	ret
+
+;------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+; Kenny's USART
+;------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+SEND_READY: ; Here we need to send a message via USART
+	; Save variables
+	push mpr
+	push XH
+	push XL
+	push ZH
+	push ZL
+
+	; Wait
+	rcall	BUSY_WAIT
+	
+	; Ready up	
+	ldi		XH, high(READY_USER)			; Load User's ready flag
+	ldi		XL, low(READY_USER)				; ^
+	ldi		mpr, 1							; Store a 1 to the ready flag
+	st		X, mpr							; ^
+	ldi		ZH, high(STRING_READY_UP<<1)	; Print to LCD
+	ldi		ZL, low(STRING_READY_UP<<1)		; ^
+	call	LCD_ALL							; ^
+
+	;Transmit via USART;
+ READY_TRANSMIT:
+	lds     mpr, UCSR1A					; Load in USART status register
+	sbrs    mpr, UDRE1					; Check the UDRE1 flag
+	rjmp    READY_TRANSMIT				; Loop back until data register is empty
+
+	ldi     mpr, SIGNAL_READY				; Send the start message to the other board
+	sts     UDR1, mpr
+
+	; Clear interrupt queue
+	ldi		mpr, 0b_1111
+	out		EIFR, mpr
+
+	; Restore variables
+	pop		ZL
+	pop		ZH
+	pop		XL
+	pop		XH
+	pop		mpr
+
+	; Return from function
+	ret
+
+MESSAGE_RECEIVE:
+	;----------------------------------------------------------------
+	; Func:	Message Receive
+	; Desc:	After receiving data, this function decides what to do with it
+	;		It performs checks on it to see what was sent in then branches
+	;		to the appropriate function.
+	;----------------------------------------------------------------
+	
+	; Save variables
+	push mpr
+	push ZH
+	push ZL
+	
+	; Turn interrupts off
+	cli
+
+	; Read message in UDR1
+	lds		mpr, UDR1				; Read the incoming data
+	ldi		olcnt, SIGNAL_READY
+	cpse	mpr, olcnt
+	rjmp	MR_R2					; Skipped if equal
+	call	RECEIVE_START			; Go to receive start
+
+ MR_R2:
+	; Other checks here
+
+	; Turn interrupts back on
+	sei
+	
+	; Restore variables
+	pop ZL
+	pop ZH
+	pop mpr
+	ret
+
+;----------------------------------------------------------------
+; Func:	
+; Desc:	
+;		
+;----------------------------------------------------------------
+RECEIVE_START:
+	; Save variables
+	push	mpr
+	push	XH
+	push	XL
+
+	; Function
+	ldi		mpr, 1					; Change Opponent's ready flag to 1
+	ldi		XH, high(READY_OPNT)	; ^
+	ldi		XL, low(READY_OPNT)		; ^
+	st		X, mpr					;
+	call	TRANSMIT_CHECK			; Check to see if we should start
+
+	; Restore variables
+	pop XL
+	pop XH
+	pop mpr
+
+	; Return from function
+	ret
+
+;----------------------------------------------------------------
+; Func:	
+; Desc:	
+;		
+;----------------------------------------------------------------
+LED_TOGGLE:
+	; Save variables
+	push	mpr
+	push	ilcnt
+
+	; Function
+	ldi		ilcnt, 0b1000_0000
+	in		mpr, PINB
+	eor		mpr, ilcnt
+	out		PORTB, mpr
+	
+	; Restore variables
+	pop		ilcnt
+	pop		mpr
+
+	; Return from function
+	ret
+
+;----------------------------------------------------------------
+; Func:	Transmit Check
+; Desc:	Does a status check after a message has been transmitter on USART1
+;----------------------------------------------------------------
+TRANSMIT_CHECK:
+	; Save variables
+	push	mpr
+	push	ilcnt
+	push	XH
+	push	XL
+
+	; Check to see if we should start the game
+	ldi		XH, high(READY_USER)	; Load both ready flags
+	ldi		XL, low(READY_USER)		; ^
+	ld		mpr, X					; ^
+	ldi		XH, high(READY_OPNT)	; ^
+	ldi		XL, low(READY_OPNT)		; ^
+	ld		ilcnt, X				; ^
+	cpse	mpr, ilcnt				; Compare the ready flags
+	rjmp	TRANSMIT_CHECK_END		; If they aren't equal jump to end
+	call	NEXT_GAME_STAGE			; ^ Else increment game stage
+
+ TRANSMIT_CHECK_END:
+	; Other checks
+
+	; Restore variables
+	pop		XL
+	pop		XH
+	pop		ilcnt
+	pop		mpr
+
+	; Return from function
+	ret
+
+;------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+; Kenny's USART end
+;------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 ;***********************************************************
 ;*	Stored Program Data
