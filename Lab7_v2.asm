@@ -53,11 +53,11 @@
 		reti
 
 .org	$0032					; USART1 RX Complete
-		;rcall	
+		;rcall	MESSAGE_RECEIVE	
 		reti
 
 .org	$0036					; USART1 TX Complete
-		;rcall	
+		;rcall	TRANSMIT_CHECK	
 		reti
 
 .org    $0056                   ; End of Interrupt Vectors
@@ -103,7 +103,7 @@ INIT:
 	st		X, mpr
 
 		; HANDs
-	ldi		mpr, SIGNAL_ROCK
+	ldi		mpr, SIGNAL_ROCK	; Default hand
 	ldi		XH, high(HAND_OPNT)
 	ldi		XL,	low(HAND_OPNT)
 	st		X, mpr
@@ -330,6 +330,9 @@ GAME_STAGE_1:
 ;-----------------------------------------------------------
 GAME_STAGE_2:
 	; Save variables
+	push	mpr
+	push	XH
+	push	XL
 	push	ZH
 	push	ZL
 
@@ -341,16 +344,68 @@ GAME_STAGE_2:
 	ldi		ZL, low(STRING_CHOOSE_HAND<<1)
 	rcall	LCD_TOP
 
+	; Load in HAND_USER
+	ldi		XH, high(HAND_USER)
+	ldi		XL,	low(HAND_USER)
+	ld		mpr, X
+
+	; Display default hand
+	cpi		mpr, SIGNAL_ROCK
+	breq	GAME_STAGE_2_ROCK
+	cpi		mpr, SIGNAL_PAPER
+	breq	GAME_STAGE_2_PAPER
+	cpi		mpr, SIGNAL_SCISSORS
+	breq	GAME_STAGE_2_SCISSORS
+
+	; If no compare match, jump to end
+	rjmp	GAME_STAGE_2_END
+
+GAME_STAGE_2_ROCK:							; Change to ROCK
+	; Change Data Memory variable HAND_USER
+	ldi		mpr, SIGNAL_ROCK
+	st		X, mpr
+
 	; Print to LCD
-		; ROCK is the default choice
-		; ___ function handles choosing hand
-	ldi		ZH, high(STRING_ROCK<<1)
-	ldi		ZL, low(STRING_ROCK<<1)
+	ldi		ZH, high(STRING_ROCK<<1)		; Point Z to string
+	ldi		ZL, low(STRING_ROCK<<1)			; ^
 	rcall	LCD_BOTTOM
 
+	; Jump to end
+	rjmp	GAME_STAGE_2_END
+
+GAME_STAGE_2_PAPER:							; Change to PAPER
+	; Change Data Memory variable HAND_USER
+	ldi		mpr, SIGNAL_PAPER
+	st		X, mpr
+
+	; Print to LCD
+	ldi		ZH, high(STRING_PAPER<<1)		; Point Z to string
+	ldi		ZL, low(STRING_PAPER<<1)		; ^
+	rcall	LCD_BOTTOM
+
+	; Jump to end
+	rjmp	GAME_STAGE_2_END
+
+GAME_STAGE_2_SCISSORS:						; Change to SCISSORS
+	; Change Data Memory variable HAND_USER
+	ldi		mpr, SIGNAL_SCISSORS
+	st		X, mpr
+
+	; Print to LCD
+	ldi		ZH, high(STRING_SCISSORS<<1)	; Point Z to string
+	ldi		ZL, low(STRING_SCISSORS<<1)		; ^
+	rcall	LCD_BOTTOM
+
+	; Jump to end
+	rjmp	GAME_STAGE_2_END
+
+GAME_STAGE_2_END:
 	; Restore variables
 	pop		ZL
 	pop		ZH
+	pop		XL
+	pop		XH
+	pop		mpr
 
 	; Return from function
 	ret
@@ -1026,7 +1081,7 @@ STRING_DRAW:
 .dseg
 .org	$0200		; Idk why this number, seems big enough
 
-TIMER_STAGE:			; TIMER_STAGE value for timer loop and LED display
+TIMER_STAGE:		; TIMER_STAGE value for timer loop and LED display
 	.byte 1
 GAME_STAGE:			; Indicates the current stage the game is in
 	.byte 1
