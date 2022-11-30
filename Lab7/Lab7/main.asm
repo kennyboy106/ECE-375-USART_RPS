@@ -528,8 +528,10 @@ NEXT_GAME_STAGE:
 
  NEXT_GAME_STAGE_4:                     ; REVEAL HANDS
     ; Start 6 second timer
-    ; Display opnt hand on LCD top row
-    rcall   GAME_STAGE_4                ; Do stuff for this stage
+    ; Display opnt hand on LCD top row from 
+    ;   receive interrupt
+    ;rcall   GAME_STAGE_4               
+    rcall   TIMER 
     ldi     mpr, 5                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
     rjmp    NEXT_GAME_STAGE_END         ; Jump to end
@@ -538,7 +540,7 @@ NEXT_GAME_STAGE:
     ; Start 6 second timer
     ; Determine the winner
     ; Print win/loss/tie msg on the LCD
-    rcall   GAME_STAGE_5                ; Do stuff for this stage
+    rcall   GAME_STAGE_5                
     ldi     mpr, 0                      ; Update GAME_STAGE, so it wraps around and next time it begins at the start
     st      X, mpr                      ; ^
     rjmp    NEXT_GAME_STAGE_END         ; Jump to end
