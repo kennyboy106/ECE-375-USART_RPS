@@ -320,7 +320,7 @@ MESSAGE_RECEIVE:
 READY_CHECK:
     ;----------------------------------------------------------------
     ; Sub:  Ready Check
-    ; Desc: Does a status check after a message has been transmitter on USART1
+    ; Desc: Does a status check after a message has been transmitted on USART1
     ;----------------------------------------------------------------
     push mpr
     push ilcnt
@@ -360,10 +360,9 @@ READY_CHECK:
 SEND_READY:
     ;----------------------------------------------------------------
     ; Sub:  Send ready
-    ; Desc: Sends the ready message via USART1 and sets he user's ready flag
+    ; Desc: Sends the ready message via USART1 and sets the user's ready flag
     ;       to be SIGNAL_READY
     ;----------------------------------------------------------------
-    ; Here we need to send a message via USART
     push mpr
     push waitcnt
     push ZH
@@ -608,7 +607,7 @@ GAME_STAGE_2:
     ;-----------------------------------------------------------
     ; Func: Game stage 2
     ; Desc: Starts the 6 second timer and displays the default 
-    ;       choice of what the user's hand it to the bottom row
+    ;       choice of what the user's hand is to the bottom row
     ;       of the LCD
     ;-----------------------------------------------------------
     ; Save variables
@@ -695,7 +694,7 @@ GAME_STAGE_2:
 GAME_STAGE_4:
     ;-----------------------------------------------------------
     ; Func: Game stage 4
-    ; Desc: Starts the 6 second timer and displays the opponents hand
+    ; Desc: Starts the 6 second timer and displays the opponent's hand
     ;       to the top row of the LCD
     ;-----------------------------------------------------------
     ; Save variables
@@ -764,7 +763,7 @@ GAME_STAGE_4:
 GAME_STAGE_5:
     ;-----------------------------------------------------------
     ; Func: Game stage 5
-    ; Desc: Starts the 6 second timer and determins the winner 
+    ; Desc: Starts the 6 second timer and determines the winner 
     ;       based on the user's hand and opponent's hand. Displays
     ;       the result on the top line of the LCD
     ;-----------------------------------------------------------
@@ -934,7 +933,7 @@ PRINT_HAND:
 CYCLE_HAND:
     ;-----------------------------------------------------------
     ; Func: Cycle hand
-    ; Desc: Cycles the user's hand through the three avaiable options
+    ; Desc: Cycles the user's hand through the three available options
     ;       and updates the LCD accordingly
     ;-----------------------------------------------------------
     ; Save variables
@@ -1019,7 +1018,7 @@ TIMER:
     ;-----------------------------------------------------------
     ; Func: Timer
     ; Desc: Starts the timer for a delay of 1.5 seconds and updates
-    ;       PORTB upper 4 LEDs to show the time remaining. Once the
+    ;       PORTB's upper 4 LEDs to show the time remaining. Once the
     ;       6 seconds are completed (4 subsequent calls TIMER) the 
     ;       TOV01 flag is disabled. 
     ;-----------------------------------------------------------
@@ -1115,11 +1114,10 @@ TIMER:
 BUSY_WAIT:
     ;----------------------------------------------------------------
     ; Func: BUSY_WAIT
-    ; Desc: A wait loop that is 16 + 159975*waitcnt cycles or roughly
-    ;       mpr*10ms.  Just initialize wait for the specific amount
-    ;       of time in 10ms intervals. Here is the general eqaution
-    ;       for the number of clock cycles in the wait loop:
-    ;       ((3 * ilcnt + 3) * olcnt + 3) * mpr + 13 + call
+    ; Desc: A  wait loop that loops enough times to cause a delay
+    ;       of 15ms. The allowed limit for busy waiting in this lab 
+    ;       is 150ms. This is used only to clear the interrupt queue 
+    ;       and prevent duplicate calls. 
     ;----------------------------------------------------------------
     ; Save variables
     push    mpr
@@ -1155,7 +1153,7 @@ STRING_IDLE:
 STRING_READY_UP:
         .DB "Ready. Waiting  for the opponent"
 STRING_CHOOSE_HAND:
-        .DB "Choose your hand"
+        .DB "Game start      "
 STRING_WON:
         .DB "You Win!        "
 STRING_LOST:
