@@ -35,7 +35,7 @@
 ;       Data Register is UDR1
 ;           To transmit use:
 ;               sts     UDR1, mpr
-;           To recieve use:
+;           To relieve use:
 ;               LDS     mpr, UDR1
 ;
 ;       Configure Interrupts
@@ -166,11 +166,11 @@
 
 .equ    WTime = 15             ; Time to wait in wait loop
 
-.equ    rock            = 0b0000_0001
-.equ    paper           = 0b0000_0010
-.equ    scissor         = 0b0000_0011
-.equ    SIG_READY       = 0b1111_1111       ; Signal for ready to start game
-.equ    SIG_NOT_READY   = 0b0000_0000   
+.equ    SIGNAL_READY        = 0b1111_1111   ; Signal for ready to start game
+.equ    SIGNAL_NOT_READY    = 0b0000_0000   ; Signal for not ready to start game
+.equ    SIGNAL_ROCK         = 0b0000_0001   ; Signal for Rock
+.equ    SIGNAL_PAPER        = 0b0000_0010   ; Signal for Paper
+.equ    SIGNAL_SCISSORS     = 0b0000_0011   ; Signal for Scissors
 
 ;***********************************************************
 ;*  Start of Code Segment
@@ -181,30 +181,31 @@
 ;*  Interrupt Vectors
 ;***********************************************************
 .org    $0000                   ; Beginning of IVs
-        rjmp    INIT            ; Reset interrupt
+        rjmp INIT            ; Reset interrupt
 
 
 .org    $0002                   ; INT0  Cycle through selection
-        ; Travis's fnuction
+        rcall CYCLE_HAND
         reti
 
-.org    $0004                   ; INT1 No use yet
+.org    $0004                   ; INT1 Send Start Msg
         rcall NEXT_GAME_STAGE
         reti
 
 .org    $0028                   ; Timer/Counter 1 Overflow
-        rcall UPDATE_TIMER
+        rcall TIMER
         reti
 
 .org    $0032                   ; USART1 Rx Complete
         rcall MESSAGE_RECEIVE
+        ;rcall  RECEIVE_TEST
         reti
 
 .org    $0034                   ; USART Data Register Empty
         reti
 
 .org    $0036                   ; USART1 Tx Complete
-        rcall TRANSMIT_CHECK
+        rcall READY_CHECK
         reti
 
 
@@ -233,20 +234,7 @@ INIT:
     ldi     mpr, $00
     out     PORTB, mpr
 
-
-    ; USART1
-    ; Frame Format:
-    ;   Data Frame          8-bit
-    ;   Stop bit            2 stop bits
-    ;   Parity bit          disable
-    ;   Asynchronous Operation
-    ; Baud 2400
-    ; Data register empty interrupt enabled
-    ; Recieve complete interrupt enabled
-    ; Transmit complete interrupt enabled
-    ; Double data rate enabled
-    ; Reciever & Transmitter enabled
-
+    ; USART1 Config
     ; Set double data rate
     ldi     mpr, (1<<U2X1)
     sts     UCSR1A, mpr
@@ -264,7 +252,7 @@ INIT:
     
     ; Timer/Counter 1
     ; Setup for normal mode WGM 0000
-    ; COM diconnected 00
+    ; COM disconnected 00
     ; Use OCR1A for top value
     ; CS TBD, using 100
     ldi     mpr, (0<<COM1A1 | 0<<COM1A0 | 0<<COM1B1 | 0<<COM1B0 | 0<<WGM11 | 0<<WGM10)
@@ -272,43 +260,56 @@ INIT:
     ldi     mpr, (0<<WGM13 | 0<<WGM12 | 1<<CS12 | 0<<CS11 | 0<<CS10)
     sts     TCCR1B, mpr
     
-
+    ; LED Initialization
     call    LCDInit                         ; Initialize LCD
     call    LCDBacklightOn
-    ldi     ZH, high(WELCOME_STR<<1)        ; Point Z to the welcome string
-    ldi     ZL, low(WELCOME_STR<<1)
+    ldi     ZH, high(STRING_IDLE<<1)        ; Point Z to the welcome string
+    ldi     ZL, low(STRING_IDLE<<1)
     call    LCD_ALL                         ; Print welcome message
 
-    ; Set the ready flags
-    ldi     mpr, $FF
-    ldi     ZH, high(User_Ready_flag)       ; Load both ready flags
-    ldi     ZL, low(User_Ready_flag)
-    st      Z, mpr                          
-    ldi     mpr, $0F                        ; Make sure the flags are different
-    ldi     ZH, high(Opnt_Ready_flag)
-    ldi     ZL, low(Opnt_Ready_flag)
-    st      Z, mpr
-    ; Set the SOME_DATA register
-    ldi     mpr, $FF
-    ldi     ZH, high(SOME_DATA)             ; Load both ready flags
-    ldi     ZL, low(SOME_DATA)
-    st      Z, mpr 
-    ; Set Game stage to be 0
-    ldi     mpr, $00
-    ldi     ZH, high(GAME_STAGE)
-    ldi     ZL, low(GAME_STAGE)
-    st      Z, mpr
+    ; Data Memory Variables
+        ; TIMER_STAGE
+    ldi     mpr, 4
+    ldi     XH, high(TIMER_STAGE)
+    ldi     XL, low(TIMER_STAGE)
+    st      X, mpr
+
+        ; GAME_STAGE
+    ldi     mpr, 0
+    ldi     XH, high(GAME_STAGE)
+    ldi     XL, low(GAME_STAGE)
+    st      X, mpr
+
+        ; HANDs
+    ldi     mpr, SIGNAL_ROCK    ; Default hand
+    ldi     XH, high(HAND_OPNT)
+    ldi     XL, low(HAND_OPNT)
+    st      X, mpr
+    ldi     XH, high(HAND_USER)
+    ldi     XL, low(HAND_USER)
+    st      X, mpr
+
+        ; READY Flags
+    ldi     mpr, SIGNAL_NOT_READY
+    ldi     XH, high(READY_OPNT)
+    ldi     XL, low(READY_OPNT)
+    st      X, mpr
+    ldi     XH, high(READY_USER)
+    ldi     XL, low(READY_USER)
+    st      X, mpr
+
    
 
     ; External Interrupts
     ; Initialize external interrupts
-    ldi     mpr, 0b0000_1010    ; Set INT1, INT0 to trigger on 
-    sts     EICRA, mpr          ; falling edge
+    ldi     mpr, 0b0000_1010            ; Set INT1, INT0 to trigger on 
+    sts     EICRA, mpr                  ; falling edge
 
     ; Configure the External Interrupt Mask
-    ldi     mpr, 0b0000_0011    ; Enable INT3, INT1, INT0
+    ldi     mpr, (0<<INT1 | 0<<INT0)    ; Disable INT1 and INT0 for now
     out     EIMSK, mpr
 
+    rcall   NEXT_GAME_STAGE
 
 
     ; Enable global interrupts
@@ -319,44 +320,39 @@ INIT:
 ;*  Main Program
 ;***********************************************************
 MAIN:
-
-        ;rjmp    MAIN
-        
-        ldi     ZH, high(SOME_DATA)     ; Poll for data in SOME_DATA
-        ldi     ZL, low(SOME_DATA)
-        ld      mpr, Z
-
-        cpi     mpr, SIG_READY          ; If its the start message
-        breq    BR_RECEIVE_START
+        sbis    PIND, PD6
+        call    TEST_SENDER
 
         rjmp    MAIN
 
 
-BR_RECEIVE_START:
-    push mpr
-    push ZH
-    push ZL
+;***********************************************************
+;*  Functions and Subroutines
+;***********************************************************
+TEST_SENDER:
+    push  mpr
+    push  ZH
+    push  ZL
 
-    ldi     mpr, $FF                    ; Clear the SOME_DATA variable
-    ldi     ZH, high(SOME_DATA)
-    ldi     ZL, low(SOME_DATA)
-    st      Z, mpr 
-    call    RECEIVE_START               ; Go to RECEIVE_START
+    ldi     ZH, high(HAND_USER)
+    ldi     ZL, low(HAND_USER)
+    ldi     mpr, SIGNAL_SCISSORS
+    st      Z, mpr
+    call    SEND_HAND
+    call    BUSY_WAIT
 
     pop ZL
     pop ZH
     pop mpr
-    rjmp    MAIN
+    ret
 
-;***********************************************************
-;*  Functions and Subroutines
-;***********************************************************
-
-;-----------------------------------------------------------
-; Func: 
-; Desc: Assumes Z already points to string.
-;-----------------------------------------------------------
+; Printing functions ----------------
 LCD_ALL:
+    ;-----------------------------------------------------------
+    ; Func: LCD All
+    ; Desc: Prints a string to the entire LCD
+    ;       Assumes Z already points to string.
+    ;-----------------------------------------------------------
     ; Save variables
     push    mpr
     push    ilcnt
@@ -387,11 +383,12 @@ LCD_ALL:
     ; Return from function
     ret
 
-;-----------------------------------------------------------
-; Func: 
-; Desc: Assumes Z already points to string.
-;-----------------------------------------------------------
 LCD_TOP:
+    ;-----------------------------------------------------------
+    ; Func: LCD Top
+    ; Desc: Prints a string to the top row of the LCD
+    ;       Assumes Z already points to string.
+    ;-----------------------------------------------------------
     ; Save variables
     push    mpr
     push    ilcnt
@@ -422,11 +419,12 @@ LCD_TOP:
     ; Return from function
     ret
     
-;-----------------------------------------------------------
-; Func: 
-; Desc: Assumes Z already points to string.
-;-----------------------------------------------------------
 LCD_BOTTOM:
+    ;-----------------------------------------------------------
+    ; Func: LCD Bottom
+    ; Desc: Prints a string to the bottom row of the LCD
+    ;       Assumes Z already points to string.
+    ;-----------------------------------------------------------
     ; Save variables
     push    mpr
     push    ilcnt
@@ -457,6 +455,153 @@ LCD_BOTTOM:
     ; Return from function
     ret
 
+
+; USART -----------------------------
+; Done
+MESSAGE_RECEIVE:
+    ;----------------------------------------------------------------
+    ; Sub:  Message Receive
+    ; Desc: After receiving data, this function decides what to do with it
+    ;       It performs checks on it to see what was sent in then branches
+    ;       to the appropriate function.
+    ;----------------------------------------------------------------
+    push mpr
+    push ZH
+    push ZL
+    cli                             ; Turn interrupts off
+    
+    ;--------- Read message in UDR1 -----------;
+    lds     mpr, UDR1               ; Read the incoming data
+    cpi     mpr, SIGNAL_READY
+    breq    MR_READY
+    call    STORE_HAND
+    rjmp    MR_END
+
+
+ MR_READY:
+    call    RECEIVE_START
+ MR_END:
+
+    sei                             ; Turn interrupts back on
+    pop ZL
+    pop ZH
+    pop mpr
+    ret
+
+; Done
+READY_CHECK:
+    ;----------------------------------------------------------------
+    ; Sub:  Transmit Check
+    ; Desc: Does a status check after a message has been transmitter on USART1
+    ;----------------------------------------------------------------
+    push mpr
+    push ilcnt
+    push ZH
+    push ZL
+    push XH
+    push XL
+
+    ;--------- Check to see if we should start the game ----------------;
+    ldi     ZH, high(READY_USER)            ; Load both ready flags
+    ldi     ZL, low(READY_USER)
+    ld      mpr, Z
+    ldi     XH, high(READY_OPNT)
+    ldi     XL, low(READY_OPNT)
+    ld      ilcnt, X
+    cpi     mpr, SIGNAL_READY
+    brne    TC_END                          ; If they aren't equal jump to end
+    cpi     ilcnt, SIGNAL_READY
+    brne    TC_END                          ; If they aren't equal jump to end
+
+    ldi     mpr, SIGNAL_NOT_READY           ; Change ready flags
+    st      Z, mpr
+    st      X, mpr
+    rcall   NEXT_GAME_STAGE                 ; If both flags are ready, advance game
+    
+ TC_END:
+    ; Other checks
+    pop XL
+    pop XH
+    pop ZL
+    pop ZH
+    pop ilcnt
+    pop mpr
+    ret
+
+; Done
+SEND_READY:
+    ; Here we need to send a message via USART
+    push mpr
+    push waitcnt
+    push ZH
+    push ZL
+
+
+    ldi     ZH, high(READY_USER)        ; Load the ready flag
+    ldi     ZL, low(READY_USER)
+    ldi     mpr, SIGNAL_READY
+    st      Z, mpr                      ; Store a 1 to the ready flag
+
+    ;-------------- Transmit via USART ----------;
+ Ready_Transmit:
+    lds     mpr, UCSR1A                 ; Load in USART status register
+    sbrs    mpr, UDRE1                  ; Check the UDRE1 flag
+    rjmp    Ready_Transmit              ; Loop back until data register is empty
+
+    ldi     mpr, SIGNAL_READY              ; Send the start message to the other board
+    sts     UDR1, mpr
+
+    ; Clear the queue
+    rcall   BUSY_WAIT               ; Wait to clear queue
+    ldi     mpr, 0b0000_0011        ; Clear interrupts
+    out     EIFR, mpr
+
+    pop ZL
+    pop ZH
+    pop waitcnt
+    pop mpr
+    ret
+
+; Done
+RECEIVE_START:
+    push mpr
+    push ZH
+    push ZL
+
+    ldi     mpr, SIGNAL_READY                      ; Change opponents ready flag to 1
+    ldi     ZH, high(READY_OPNT)
+    ldi     ZL, low(READY_OPNT)
+    st      Z, mpr
+    call    READY_CHECK              ; Check to see if we should start
+
+    pop ZL
+    pop ZH
+    pop mpr
+    ret
+
+; Done
+SEND_HAND:
+    push mpr
+    push ZH
+    push ZL
+
+ Hand_Transmit:
+    ; See if the USART data register is empty
+    lds     mpr, UCSR1A     ; UDRE1 will be 1 when buffer is empty
+    sbrs    mpr, UDRE1      ; Test only the 5th bit
+    rjmp    Hand_Transmit
+
+    ldi     ZH, high(HAND_USER)     ; Load the user's hand
+    ldi     ZL, low(HAND_USER)      
+    ld      mpr, Z 
+    sts     UDR1, mpr               ; Send user's hand via USART1
+
+    pop ZL
+    pop ZH
+    pop mpr
+    ret
+
+; Core game -------------------------
 NEXT_GAME_STAGE:
     ;-----------------------------------------------------------
     ; Func: 
@@ -488,322 +633,672 @@ NEXT_GAME_STAGE:
     breq    NEXT_GAME_STAGE_3
     cpi     mpr, 4
     breq    NEXT_GAME_STAGE_4
-    rjmp    NEXT_GAME_STAGE_END         ; In case checks are skipped
+    cpi     mpr, 5
+    breq    NEXT_GAME_STAGE_5
 
- NEXT_GAME_STAGE_0:
+    ; If no compare match, branch to end
+    rjmp    NEXT_GAME_STAGE_END
+
+ NEXT_GAME_STAGE_0:                     ; IDLE
+    rcall   GAME_STAGE_0                ; Do stuff for this stage
     ldi     mpr, 1                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    ldi     mpr, (0<<INT1 | 1<<INT0)    ; Disable INT1 (PD7) because it's only use was to start the game
-    sts     EIMSK, mpr                  ; ^ INT0 (PD4) is still needed to change HAND_USER
-    call    SEND_READY                  ; Send the ready message via USART1
-    rjmp    NEXT_GAME_STAGE_END
+    ldi     mpr, (1<<INT1)              ; Enable INT1 (PD7) so it can start the game again
+    out     EIMSK, mpr                  ; ^
+    rjmp    NEXT_GAME_STAGE_END         ; Jump to end
 
- NEXT_GAME_STAGE_1:
+ NEXT_GAME_STAGE_1:                     ; READY UP
+    ; Disable PD7 
+    ; Print ready message
+    ; Send ready message
+    ldi     mpr, (0<<INT1)              ; Disable INT1 (PD7) because it's only use was to start the game
+    out     EIMSK, mpr                  ; ^
+    rcall   GAME_STAGE_1                ; Do stuff for this stage
     ldi     mpr, 2                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    rjmp    NEXT_GAME_STAGE_END
+    rjmp    NEXT_GAME_STAGE_END         ; Jump to end
     
- NEXT_GAME_STAGE_2:
+ NEXT_GAME_STAGE_2:                     ; CHOOSE HAND
+    ; Display user hand on bottom row
+    ; Starts the timer
+    ; Enables PD4
+    rcall   GAME_STAGE_2                ; Do stuff for this stage
     ldi     mpr, 3                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    rcall   TIMER_START
-    rjmp    NEXT_GAME_STAGE_END
+    ldi     mpr, (1<<INT0)              ; Enable INT0 so hand can be changed
+    out     EIMSK, mpr                  ; ^
+    rjmp    NEXT_GAME_STAGE_END         ; Jump to end
 
  NEXT_GAME_STAGE_3:
+    ; Disable PD4
+    ; Send user's hand
+    ; wait for recieve
+    ldi     mpr, (0<<INT0)              ; Disable INT0 so hand cannot be changed
+    out     EIMSK, mpr                  ; ^
+    ; Send user hand to USART
+    call    SEND_HAND
+    ; Recieve hand USART
+    ; Taken care of by receive complete interrupt
     ldi     mpr, 4                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
-    rcall   TIMER_START
-    rjmp    NEXT_GAME_STAGE_END
 
- NEXT_GAME_STAGE_4:
+ NEXT_GAME_STAGE_4:                     ; REVEAL HANDS
+    rcall   GAME_STAGE_4                ; Do stuff for this stage
+    ldi     mpr, 5                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+    rjmp    NEXT_GAME_STAGE_END         ; Jump to end
+
+ NEXT_GAME_STAGE_5:                     ; RESULT
+    rcall   GAME_STAGE_5                ; Do stuff for this stage
     ldi     mpr, 0                      ; Update GAME_STAGE, so it wraps around and next time it begins at the start
     st      X, mpr                      ; ^
-    rcall   TIMER_START
-    ldi     mpr, (1<<INT1 | 1<<INT0)    ; Enable INT3 (PD7) so it can start the game again
-    sts     EIMSK, mpr                  ; ^
-    rjmp    NEXT_GAME_STAGE_END
+    rjmp    NEXT_GAME_STAGE_END         ; Jump to end
 
  NEXT_GAME_STAGE_END:
-
-    ldi     waitcnt, WTime              ; Wait for 15 ms to clear interrupt queue
-    rcall   Wait
-
-    ldi     mpr, 0b0000_0011            ; Clear interrupt queue
+    ; Clear interrupt queue
+    rcall   BUSY_WAIT
+    ldi     mpr, 0b1111_1111
     out     EIFR, mpr
 
     ; Restore variables
     pop     XL
     pop     XH
     pop     mpr
+
     ; Return from function
     ret
 
-SEND_READY:
-    ; Here we need to send a message via USART
-    push mpr
-    push waitcnt
+GAME_STAGE_0:
+    ;-----------------------------------------------------------
+    ; Func: 
+    ; Desc: GAME_STAGE_0 = IDLE
+    ;-----------------------------------------------------------
+    ; Save variables
+    push    ZH
+    push    ZL
 
-    ldi     waitcnt, WTime                  ; Wait for one second
-    rcall   Wait
-    
-    
-    
-    ldi     ZH, high(User_Ready_flag)   ; Load the ready flag
-    ldi     ZL, low(User_Ready_flag)
-    ldi     mpr, 1
-    st      Z, mpr                      ; Store a 1 to the ready flag
-    ldi     ZH, high(READY_STR<<1)      ; Point Z to the Ready string
-    ldi     ZL, low(READY_STR<<1)
-    call    LCD_ALL
+    ; Print to LCD
+    ldi     ZH, high(STRING_IDLE<<1)
+    ldi     ZL, low(STRING_IDLE<<1)
+    rcall   LCD_ALL
 
-    ;-------------- Transmit via USART ----------;
- Ready_Transmit:
-    lds     mpr, UCSR1A                 ; Load in USART status register
-    sbrs    mpr, UDRE1                  ; Check the UDRE1 flag
-    rjmp    Ready_Transmit              ; Loop back until data register is empty
+    ; Restore variables
+    pop     ZL
+    pop     ZH
 
-    ldi     mpr, SIG_READY              ; Send the start message to the other board
-    sts     UDR1, mpr
-
-    ; Clear the queue
-    ldi     mpr, 0b0000_0011        ; Clear interrupts
-    out     EIFR, mpr
-
-    pop waitcnt
-    pop mpr
+    ; Return from function
     ret
 
-MESSAGE_RECEIVE:
-    ;----------------------------------------------------------------
-    ; Sub:  Message Receive
-    ; Desc: After receiving data, this function decides what to do with it
-    ;       It performs checks on it to see what was sent in then branches
-    ;       to the appropriate function.
-    ;----------------------------------------------------------------
+GAME_STAGE_1:
+    ;-----------------------------------------------------------
+    ; Func: 
+    ; Desc: GAME_STAGE_1 = READY UP
+    ;-----------------------------------------------------------
+    ; Save variables
+    push    ZH
+    push    ZL
+
+    ; Print to LCD
+    ldi     ZH, high(STRING_READY_UP<<1)
+    ldi     ZL, low(STRING_READY_UP<<1)
+    rcall   LCD_ALL
+
+    ; Send ready message to other board
+    rcall   SEND_READY
+
+    ; Restore variables
+    pop     ZL
+    pop     ZH
+
+    ; Return from function
+    ret
+
+GAME_STAGE_2:
+    ;-----------------------------------------------------------
+    ; Func: 
+    ; Desc: GAME_STAGE_2 = CHOOSE HAND
+    ;-----------------------------------------------------------
+    ; Save variables
+    push    mpr
+    push    XH
+    push    XL
+    push    ZH
+    push    ZL
+
+    ; Start 6 second timer
+    rcall   TIMER
+
+    ; Print to LCD
+    ldi     ZH, high(STRING_CHOOSE_HAND<<1)
+    ldi     ZL, low(STRING_CHOOSE_HAND<<1)
+    rcall   LCD_TOP
+
+    ; Load in HAND_USER
+    ldi     XH, high(HAND_USER)
+    ldi     XL, low(HAND_USER)
+    ld      mpr, X
+
+    ; Display default hand
+    cpi     mpr, SIGNAL_ROCK
+    breq    GAME_STAGE_2_ROCK
+    cpi     mpr, SIGNAL_PAPER
+    breq    GAME_STAGE_2_PAPER
+    cpi     mpr, SIGNAL_SCISSORS
+    breq    GAME_STAGE_2_SCISSORS
+
+    ; If no compare match, jump to end
+    rjmp    GAME_STAGE_2_END
+
+ GAME_STAGE_2_ROCK:                         ; Change to ROCK
+    ; Change Data Memory variable HAND_USER
+    ldi     mpr, SIGNAL_ROCK
+    st      X, mpr
+
+    ; Print to LCD
+    ldi     ZH, high(STRING_ROCK<<1)        ; Point Z to string
+    ldi     ZL, low(STRING_ROCK<<1)         ; ^
+    rcall   LCD_BOTTOM
+
+    ; Jump to end
+    rjmp    GAME_STAGE_2_END
+
+ GAME_STAGE_2_PAPER:                            ; Change to PAPER
+    ; Change Data Memory variable HAND_USER
+    ldi     mpr, SIGNAL_PAPER
+    st      X, mpr
+
+    ; Print to LCD
+    ldi     ZH, high(STRING_PAPER<<1)       ; Point Z to string
+    ldi     ZL, low(STRING_PAPER<<1)        ; ^
+    rcall   LCD_BOTTOM
+
+    ; Jump to end
+    rjmp    GAME_STAGE_2_END
+
+ GAME_STAGE_2_SCISSORS:                     ; Change to SCISSORS
+    ; Change Data Memory variable HAND_USER
+    ldi     mpr, SIGNAL_SCISSORS
+    st      X, mpr
+
+    ; Print to LCD
+    ldi     ZH, high(STRING_SCISSORS<<1)    ; Point Z to string
+    ldi     ZL, low(STRING_SCISSORS<<1)     ; ^
+    rcall   LCD_BOTTOM
+
+    ; Jump to end
+    rjmp    GAME_STAGE_2_END
+
+ GAME_STAGE_2_END:
+    ; Restore variables
+    pop     ZL
+    pop     ZH
+    pop     XL
+    pop     XH
+    pop     mpr
+
+    ; Return from function
+    ret
+
+GAME_STAGE_4:
+    ;-----------------------------------------------------------
+    ; Func: 
+    ; Desc: GAME_STAGE_4 = REVEAL HANDS
+    ;-----------------------------------------------------------
+    ; Save variables
+    push    mpr
+    push    XH
+    push    XL
+    push    ZH
+    push    ZL
+
+    ; Start 6 second timer
+    rcall   TIMER
+    
+    ; Branch based on Opponent Hand
+    ldi     XH, high(HAND_OPNT)
+    ldi     XL, low(HAND_OPNT)
+    ld      mpr, X
+    
+    cpi     mpr, 1
+    breq    GAME_STAGE_4_ROCK
+    cpi     mpr, 2
+    breq    GAME_STAGE_4_PAPER
+    cpi     mpr, 3
+    breq    GAME_STAGE_4_SCISSORS
+
+    ; If no compare match, branch to end
+    rjmp    GAME_STAGE_4_END
+
+ GAME_STAGE_4_ROCK:
+    ; Print to LCD
+    ldi     ZH, high(STRING_ROCK<<1)
+    ldi     ZL, low(STRING_ROCK<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    GAME_STAGE_4_END
+
+ GAME_STAGE_4_PAPER:
+    ; Print to LCD
+    ldi     ZH, high(STRING_PAPER<<1)
+    ldi     ZL, low(STRING_PAPER<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    GAME_STAGE_4_END
+
+ GAME_STAGE_4_SCISSORS:
+    ; Print to LCD
+    ldi     ZH, high(STRING_SCISSORS<<1)
+    ldi     ZL, low(STRING_SCISSORS<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    GAME_STAGE_4_END
+
+ GAME_STAGE_4_END:
+    ; Restore variables
+    pop     ZL
+    pop     ZH
+    pop     XL
+    pop     XH
+    pop     mpr
+
+    ; Return from function
+    ret
+
+GAME_STAGE_5:
+    ;-----------------------------------------------------------
+    ; Func: 
+    ; Desc: GAME_STAGE_5 = RESULT
+    ;-----------------------------------------------------------
+    ; Save variables
+    push    mpr
+    push    ilcnt
+    push    XH
+    push    XL
+    push    ZH
+    push    ZL
+
+    ; Start 6 second timer
+    rcall   TIMER
+
+    ; Decide Won/Lost/Draw
+        ; Calculate result value
+            ; Won   = -2, 1
+            ; Lost  = -1, 2
+            ; Draw  = 0
+    ldi     XH, high(HAND_USER)
+    ldi     XL, low(HAND_USER)
+    ld      mpr, X
+    ldi     XH, high(HAND_OPNT)
+    ldi     XL, low(HAND_OPNT)
+    ld      ilcnt, X
+    sub     mpr, ilcnt              ; Result value stored in mpr
+
+    ; Branch based on result
+    cpi     mpr, -2
+    breq    GAME_STAGE_5_WON
+    cpi     mpr, 1
+    breq    GAME_STAGE_5_WON
+    cpi     mpr, -1
+    breq    GAME_STAGE_5_LOST
+    cpi     mpr, 2
+    breq    GAME_STAGE_5_LOST
+    cpi     mpr, 0
+    breq    GAME_STAGE_5_DRAW
+
+    ; If no compare match, jump to end
+    rjmp    GAME_STAGE_5_END
+
+ GAME_STAGE_5_WON:
+    ; Print to LCD
+    ldi     ZH, high(STRING_WON<<1)
+    ldi     ZL, low(STRING_WON<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    GAME_STAGE_5_END
+
+ GAME_STAGE_5_LOST:
+    ; Print to LCD
+    ldi     ZH, high(STRING_LOST<<1)
+    ldi     ZL, low(STRING_LOST<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    GAME_STAGE_5_END
+
+ GAME_STAGE_5_DRAW:
+    ; Print to LCD
+    ldi     ZH, high(STRING_DRAW<<1)
+    ldi     ZL, low(STRING_DRAW<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    GAME_STAGE_5_END
+
+ GAME_STAGE_5_END:
+    ; Restore variables
+    pop     ZL
+    pop     ZH
+    pop     XL
+    pop     XH
+    pop     ilcnt
+    pop     mpr
+
+    ; Return from function
+    ret
+
+STORE_HAND:
+    ;-----------------------------------------------------------
+    ; Func: Store hand
+    ; Desc: Stores the incoming opponents hand to HAND_OPNT
+    ;-----------------------------------------------------------
     push mpr
     push ZH
     push ZL
-    cli                             ; Turn interrupts off
-    
-    ;--------- Read message in UDR1 -----------;
-    lds     mpr, UDR1               ; Read the incoming data
-    ldi     olcnt, SIG_READY
-    cpse    mpr, olcnt
-    rjmp    MR_R2                   ; Skipped if equal
-    call    RECEIVE_START           ; Go to receive start
 
- MR_R2:
-    ; other checks here
+    ldi     ZH, high(HAND_OPNT)     ; mpr currently holds OPNT hand
+    ldi     ZL, low(HAND_OPNT)
+    st      Z, mpr                  ; Store the hand received
 
-
-    sei                             ; Turn interrupts back on
     pop ZL
     pop ZH
     pop mpr
-    ret
+    ret 
 
-
-RECEIVE_START:
+PRINT_HAND:
     push mpr
-    push ZH
-    push ZL
-
-    ldi     mpr, 1                      ; Change opponents ready flag to 1
-    ldi     ZH, high(Opnt_Ready_flag)
-    ldi     ZL, low(Opnt_Ready_flag)
-    st      Z, mpr
-    call    TRANSMIT_CHECK              ; Check to see if we should start
-
-    pop ZL
-    pop ZH
-    pop mpr
-    ret
-
-LED_TOGGLE:
-    push  waitcnt
-    push  mpr
-
-    ldi     waitcnt, 0b1000_0000
-    in      mpr, PINB 
-    eor     mpr, waitcnt    
-    out     PORTB, mpr
-    
-    pop mpr
-    pop waitcnt
-    ret
-
-START_GAME:
-    push mpr
-    push ZH
-    push ZL
-
-    ; Clear the ready flags
-    ldi     mpr, $FF
-    ldi     ZH, high(User_Ready_flag)       ; Load both ready flags
-    ldi     ZL, low(User_Ready_flag)
-    st      Z, mpr                          ; Clear them
-    ldi     mpr, $0F                        ; Make sure the flags are different
-    ldi     ZH, high(Opnt_Ready_flag)
-    ldi     ZL, low(Opnt_Ready_flag)
-    st      Z, mpr
-    call    TIMER_START
-
-    pop ZL
-    pop ZH
-    pop mpr
-    ret
-
-TIMER_START:
-    push mpr
-    push ZH
-    push ZL
-
-    ; Initialize counter var to be 4
-    ldi     mpr, 4
-    ldi     ZH, high(TCounter)
-    ldi     ZL, low(TCounter)
-    st      Z, mpr
-    ; Set LEDs
-    ldi     mpr, 0b1111_0000        ; Set upper 4 LEDs to be on
-    out     PORTB, mpr
-
-    ; Start the counter
-    ldi     mpr, (1<<TOIE1)         ; Set TOV01 enable
-    sts     TIMSK1, mpr
-    ldi     mpr, $48                ; Starting counter at 18,661 for 1.5 second delay
-    sts     TCNT1H, mpr             ; Write high then low
-    ldi     mpr, $E5
-    sts     TCNT1L, mpr
-
-
-    pop ZL
-    pop ZH
-    pop mpr
-    ret
-
-TRANSMIT_CHECK:
-    ;----------------------------------------------------------------
-    ; Sub:  Transmit Check
-    ; Desc: Does a status check after a message has been transmitter on USART1
-    ;----------------------------------------------------------------
-    push mpr
-    push ilcnt
-    push ZH
-    push ZL
     push XH
     push XL
-
-    ;--------- Check to see if we should start the game ----------------;
-    ldi     ZH, high(User_Ready_flag)       ; Load both ready flags
-    ldi     ZL, low(User_Ready_flag)
-    ld      mpr, Z
-    ldi     XH, high(Opnt_Ready_flag)
-    ldi     XL, low(Opnt_Ready_flag)
-    ld      ilcnt, X
-    cpse    mpr, ilcnt                      ; Compare the ready flags
-    rjmp    TC_END                          ; If they aren't equal jump to end
-    call    NEXT_GAME_STAGE                 ; else increment game stage
-
- TC_END:
-    ; Other checks
-    pop XL
-    pop XH
-    pop ZL
-    pop ZH
-    pop ilcnt
-    pop mpr
-    ret
-
-UPDATE_TIMER:
-    push mpr
     push ZH
     push ZL
-    ;------------------------- Reset Counter ----------------------------;
-    ldi     mpr, $48            ; Starting counter at 18,661 for 1.5 second delay
-    sts     TCNT1H, mpr         ; Write high then low
-    ldi     mpr, $E5
-    sts     TCNT1L, mpr
-    ;------------------------- Decrement the counter --------------------;
-    ldi     ZH, high(TCounter)
-    ldi     ZL, low(TCounter)
-    ld      mpr, Z
-    dec     mpr
-    st      Z, mpr
-    ;------------------------- Adjust the LEDs --------------------------;
-    clc                         ; Clear the carry flag
-    in      mpr, PINB           ; Read in current LEDs
-    ror     mpr                 ; Shift to the right by 1
-    out     PORTB, mpr          ; Put it back on the port
-    cpi     mpr, 0              ; Turn off TOV01 interrupt flag if @ 0
-    breq    OFF
-    rjmp    END                 ; Else return normally
 
- OFF: 
-    ldi     mpr, (0<<TOIE1)     ; Clear TOV01 enable
-    sts     TIMSK1, mpr
+
+    ; Branch based on Opponent Hand
+    ldi     XH, high(HAND_OPNT)
+    ldi     XL, low(HAND_OPNT)
+    ld      mpr, X
     
-    ldi     ZH, high(GAME_STAGE); Check to see if we are calling from GS 4
-    ldi     ZL, low(GAME_STAGE)
-    ld      mpr, Z
-    cpi     mpr, 0
-    breq    END                 ; If it is Game_Stage 4 then skip to end
-    call    NEXT_GAME_STAGE
+    cpi     mpr, 1
+    breq    RECEIVE_TEST_ROCK
+    cpi     mpr, 2
+    breq    RECEIVE_TEST_PAPER
+    cpi     mpr, 3
+    breq    RECEIVE_TEST_SCISSORS
 
- END:
-    pop ZL                      ; Regular return stuff
-    pop ZH
-    pop mpr
+    ; If no compare match, branch to end
+    rjmp    RECEIVE_TEST_END
+
+ RECEIVE_TEST_ROCK:
+    ; Print to LCD
+    ldi     ZH, high(STRING_ROCK<<1)
+    ldi     ZL, low(STRING_ROCK<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    RECEIVE_TEST_END
+
+ RECEIVE_TEST_PAPER:
+    ; Print to LCD
+    ldi     ZH, high(STRING_PAPER<<1)
+    ldi     ZL, low(STRING_PAPER<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    RECEIVE_TEST_END
+
+ RECEIVE_TEST_SCISSORS:
+    ; Print to LCD
+    ldi     ZH, high(STRING_SCISSORS<<1)
+    ldi     ZL, low(STRING_SCISSORS<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    RECEIVE_TEST_END
+
+ RECEIVE_TEST_END:
+    ; Restore variables
+    pop     ZL
+    pop     ZH
+    pop     XL
+    pop     XH
+    pop     mpr
     ret
 
-Wait:
+CYCLE_HAND:
+    ;-----------------------------------------------------------
+    ; Func: 
+    ; Desc:
+    ;-----------------------------------------------------------
+    ; Save variables
+    push    mpr
+    push    XH
+    push    XL
+    push    ZH
+    push    ZL
+
+    ; Load in HAND_USER
+    ldi     XH, high(HAND_USER)
+    ldi     XL, low(HAND_USER)
+    ld      mpr, X
+
+    ; Change hand based on current hand
+    cpi     mpr, SIGNAL_ROCK
+    breq    CYCLE_HAND_PAPER
+    cpi     mpr, SIGNAL_PAPER
+    breq    CYCLE_HAND_SCISSORS
+    cpi     mpr, SIGNAL_SCISSORS
+    breq    CYCLE_HAND_ROCK
+
+    ; If no compare match, jump to end
+    rjmp    CYCLE_HAND_END
+
+ CYCLE_HAND_ROCK:                           ; Change to ROCK
+    ; Change Data Memory variable HAND_USER
+    ldi     mpr, SIGNAL_ROCK
+    st      X, mpr
+
+    ; Print to LCD
+    ldi     ZH, high(STRING_ROCK<<1)        ; Point Z to string
+    ldi     ZL, low(STRING_ROCK<<1)         ; ^
+    rcall   LCD_BOTTOM
+
+    ; Jump to end
+    rjmp    CYCLE_HAND_END
+
+ CYCLE_HAND_PAPER:                          ; Change to PAPER
+    ; Change Data Memory variable HAND_USER
+    ldi     mpr, SIGNAL_PAPER
+    st      X, mpr
+
+    ; Print to LCD
+    ldi     ZH, high(STRING_PAPER<<1)       ; Point Z to string
+    ldi     ZL, low(STRING_PAPER<<1)        ; ^
+    rcall   LCD_BOTTOM
+
+    ; Jump to end
+    rjmp    CYCLE_HAND_END
+
+ CYCLE_HAND_SCISSORS:                       ; Change to SCISSORS
+    ; Change Data Memory variable HAND_USER
+    ldi     mpr, SIGNAL_SCISSORS
+    st      X, mpr
+
+    ; Print to LCD
+    ldi     ZH, high(STRING_SCISSORS<<1)    ; Point Z to string
+    ldi     ZL, low(STRING_SCISSORS<<1)     ; ^
+    rcall   LCD_BOTTOM
+
+    ; Jump to end
+    rjmp    CYCLE_HAND_END
+
+ CYCLE_HAND_END:
+    ; Clear interrupt queue
+    rcall   BUSY_WAIT
+    ldi     mpr, 0b1111_1111
+    out     EIFR, mpr
+
+    ; Restore variables
+    pop     ZL
+    pop     ZH
+    pop     XL
+    pop     XH
+    pop     mpr
+
+    ; Return from function
+    ret
+
+TIMER:
+    ;-----------------------------------------------------------
+    ; Func: 
+    ; Desc: 
+    ;-----------------------------------------------------------
+    ; Save variables
+    push    mpr
+    push    XH
+    push    XL
+
+    ldi     mpr, $48        ; Write to high byte first
+    sts     TCNT1H, mpr     ; ^
+    ldi     mpr, $E5        ; Write to low byte second
+    sts     TCNT1L, mpr     ; ^
+
+    ; Load in TIMER_STAGE
+    ldi     XH, high(TIMER_STAGE)
+    ldi     XL, low(TIMER_STAGE)
+    ld      mpr, X
+
+    ; Branch based on current TIMER_STAGE
+    cpi     mpr, 4
+    breq    TIMER_4
+    cpi     mpr, 3
+    breq    TIMER_3
+    cpi     mpr, 2
+    breq    TIMER_2
+    cpi     mpr, 1
+    breq    TIMER_1
+    cpi     mpr, 0
+    breq    TIMER_0
+
+    ; If no compare match, branch to end
+    rjmp    TIMER_END
+
+ TIMER_4:                        ; Start timer
+    ldi     mpr, (1<<TOIE1)     ; TOIE1 = 1 = Overflow Interrupt Enabled
+    sts     TIMSK1, mpr         ; ^
+    ldi     mpr, 3              ; Update TIMER_STAGE
+    st      X, mpr              ; ^
+    in      mpr, PINB           ; Update LEDs
+    andi    mpr, 0b0000_1111    ; ^
+    ori     mpr, 0b1111_0000    ; ^
+    out     PORTB, mpr          ; ^
+    rjmp    TIMER_END           ; Jump to end
+
+ TIMER_3:
+    ldi     mpr, 2              ; Update TIMER_STAGE
+    st      X, mpr              ; ^
+    in      mpr, PINB           ; Update LEDs
+    andi    mpr, 0b0000_1111    ; ^
+    ori     mpr, 0b0111_0000    ; ^
+    out     PORTB, mpr          ; ^
+    rjmp    TIMER_END           ; Jump to end
+
+ TIMER_2:
+    ldi     mpr, 1              ; Update TIMER_STAGE
+    st      X, mpr              ; ^
+    in      mpr, PINB           ; Update LEDs
+    andi    mpr, 0b0000_1111    ; ^
+    ori     mpr, 0b0011_0000    ; ^
+    out     PORTB, mpr          ; ^
+    rjmp    TIMER_END           ; Jump to end
+
+ TIMER_1:
+    ldi     mpr, 0              ; Update TIMER_STAGE
+    st      X, mpr              ; ^
+    in      mpr, PINB           ; Update LEDs
+    andi    mpr, 0b0000_1111    ; ^
+    ori     mpr, 0b0001_0000    ; ^
+    out     PORTB, mpr          ; ^
+    rjmp    TIMER_END           ; Jump to end
+
+ TIMER_0:                        ; End timer
+    ldi     mpr, (0<<TOIE1)     ; TOIE1 = 0 = Overflow Interrupt Disabled
+    sts     TIMSK1, mpr         ; ^
+    ldi     mpr, 4              ; Update TIMER_STAGE, so it wraps around and next time it begins at the start
+    st      X, mpr              ; ^
+    in      mpr, PINB           ; Update LEDs
+    andi    mpr, 0b0000_1111    ; ^
+    ori     mpr, 0b0000_0000    ; ^
+    out     PORTB, mpr          ; ^
+    rcall   NEXT_GAME_STAGE     ; Update GAME_STAGE
+    rjmp    TIMER_END           ; Jump to end
+
+ TIMER_END:
+    ; Restore variables
+    pop     XL
+    pop     XH
+    pop     mpr
+
+    ; Return from function
+    ret
+
+BUSY_WAIT:
     ;----------------------------------------------------------------
-    ; Sub:  Wait
+    ; Func: BUSY_WAIT
     ; Desc: A wait loop that is 16 + 159975*waitcnt cycles or roughly
-    ;       waitcnt*10ms.  Just initialize wait for the specific amount
+    ;       mpr*10ms.  Just initialize wait for the specific amount
     ;       of time in 10ms intervals. Here is the general eqaution
     ;       for the number of clock cycles in the wait loop:
-    ;           ((3 * ilcnt + 3) * olcnt + 3) * waitcnt + 13 + call
+    ;       ((3 * ilcnt + 3) * olcnt + 3) * mpr + 13 + call
     ;----------------------------------------------------------------
-        ; Save variables by pushing them to the stack
-        push    waitcnt         ; Save wait register
-        push    ilcnt           ; Save ilcnt register
-        push    olcnt           ; Save olcnt register
+    ; Save variables
+    push    mpr
+    push    ilcnt
+    push    olcnt
+    
+    ldi     mpr, 15
+ BUSY_WAIT_LOOP:
+    ldi     olcnt, 224      ; Load olcnt register
+ BUSY_WAIT_OLOOP:
+    ldi     ilcnt, 237      ; Load ilcnt register
+ BUSY_WAIT_ILOOP:
+    dec     ilcnt           ; Decrement ilcnt
+    brne    BUSY_WAIT_ILOOP ; Continue Inner Loop
+    dec     olcnt           ; Decrement olcnt
+    brne    BUSY_WAIT_OLOOP ; Continue Outer Loop
+    dec     mpr
+    brne    BUSY_WAIT_LOOP
 
-    Loop:   ldi     olcnt, 224      ; Load olcnt register
-    OLoop:  ldi     ilcnt, 237      ; Load ilcnt register
-    ILoop:  dec     ilcnt           ; Decrement ilcnt
-            brne    ILoop           ; Continue Inner Loop
-            dec     olcnt           ; Decrement olcnt
-            brne    OLoop           ; Continue Outer Loop
-            dec     waitcnt         ; Decrement wait
-            brne    Loop            ; Continue Wait loop
+    ; Restore variables
+    pop     olcnt
+    pop     ilcnt
+    pop     mpr
 
-        ; Restore variable by popping them from the stack in reverse order
-        pop     olcnt       ; Restore olcnt register
-        pop     ilcnt       ; Restore ilcnt register
-        pop     waitcnt     ; Restore wait register
-
-        ; Return from subroutine
-        ret
+    ; Return from function
+    ret
 
 ;***********************************************************
 ;*  Stored Program Data
 ;***********************************************************
-WELCOME_STR:
+STRING_IDLE:
         .DB "Welcome!        Please press PD7"
-READY_STR:
+STRING_READY_UP:
         .DB "Ready. Waiting  for the opponent"
-WINNER_STR:
+STRING_CHOOSE_HAND:
+        .DB "Choose your hand"
+STRING_WON:
         .DB "You Win!        "
-LOSER_STR:
+STRING_LOST:
         .DB "You Lose!       "
-DRAW_STR:
+STRING_DRAW:
         .DB "Draw            "
-ROCK_STR:
+STRING_ROCK:
         .DB "Rock            "
-PAPER_STR:
+STRING_PAPER:
         .DB "Paper           "
-SCISSOR_STR:
+STRING_SCISSORS:
         .DB "Scissor         "
 
 ;***********************************************************
@@ -811,20 +1306,18 @@ SCISSOR_STR:
 ;***********************************************************
 .dseg
 .org    $0200
-User_Ready_flag:        ; Ready flag to be set when receiving start msg
-        .byte 1
-Opnt_Ready_flag:        ; Ready flag to be set when receiving start msg
-        .byte 1
-TCounter:               ; Space for a counting variable
-        .byte 1
-HAND_USER:              ; User choice: Rock / Paper / Scissors
-        .byte 1
-HAND_OPNT:              ; Opponent choice: Rock / Paper / Scissors
-        .byte 1
-SOME_DATA:
-        .byte 1
-GAME_STAGE:             ; Indicates the current stage the game is in
-        .byte 1
+TIMER_STAGE:        ; TIMER_STAGE value for timer loop and LED display
+    .byte 1
+GAME_STAGE:         ; Indicates the current stage the game is in
+    .byte 1
+HAND_OPNT:          ; Opponent choice: Rock / Paper / Scissors
+    .byte 1
+HAND_USER:          ; User choice: Rock / Paper / Scissors
+    .byte 1
+READY_OPNT:         ; Opponent ready
+    .byte 1
+READY_USER:         ; User ready
+    .byte 1
 
 ;***********************************************************
 ;*  Additional Program Includes
