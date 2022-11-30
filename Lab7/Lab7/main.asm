@@ -509,6 +509,10 @@ READY_CHECK:
     brne    TC_END                          ; If they aren't equal jump to end
     cpi     ilcnt, SIGNAL_READY
     brne    TC_END                          ; If they aren't equal jump to end
+
+    ldi     mpr, SIGNAL_NOT_READY           ; Change ready flags
+    st      Z, mpr
+    st      X, mpr
     rcall   NEXT_GAME_STAGE                 ; If both flags are ready, advance game
     
  TC_END:
@@ -525,6 +529,8 @@ SEND_READY:
     ; Here we need to send a message via USART
     push mpr
     push waitcnt
+    push ZH
+    push ZL
 
 
     ldi     ZH, high(READY_USER)        ; Load the ready flag
@@ -546,6 +552,8 @@ SEND_READY:
     ldi     mpr, 0b0000_0011        ; Clear interrupts
     out     EIFR, mpr
 
+    pop ZL
+    pop ZH
     pop waitcnt
     pop mpr
     ret
@@ -619,6 +627,8 @@ NEXT_GAME_STAGE:
     breq    NEXT_GAME_STAGE_3
     cpi     mpr, 4
     breq    NEXT_GAME_STAGE_4
+    cpi     mpr, 5
+    breq    NEXT_GAME_STAGE_5
 
     ; If no compare match, branch to end
     rjmp    NEXT_GAME_STAGE_END
@@ -647,16 +657,24 @@ NEXT_GAME_STAGE:
     out     EIMSK, mpr                  ; ^
     rjmp    NEXT_GAME_STAGE_END         ; Jump to end
 
- NEXT_GAME_STAGE_3:                     ; REVEAL HANDS
+ NEXT_GAME_STAGE_3:
     ldi     mpr, (0<<INT0)              ; Disable INT0 so hand cannot be changed
     out     EIMSK, mpr                  ; ^
-    rcall   GAME_STAGE_3                ; Do stuff for this stage
+    ; Send user hand to USART
+    call    SEND_HAND
+    ; Recieve hand USART
+    ; Taken care of by receive complete interrupt
     ldi     mpr, 4                      ; Update GAME_STAGE
+    st      X, mpr                      ; ^
+
+ NEXT_GAME_STAGE_4:                     ; REVEAL HANDS
+    rcall   GAME_STAGE_4                ; Do stuff for this stage
+    ldi     mpr, 5                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
     rjmp    NEXT_GAME_STAGE_END         ; Jump to end
 
- NEXT_GAME_STAGE_4:                     ; RESULT
-    rcall   GAME_STAGE_4                ; Do stuff for this stage
+ NEXT_GAME_STAGE_5:                     ; RESULT
+    rcall   GAME_STAGE_5                ; Do stuff for this stage
     ldi     mpr, 0                      ; Update GAME_STAGE, so it wraps around and next time it begins at the start
     st      X, mpr                      ; ^
     rjmp    NEXT_GAME_STAGE_END         ; Jump to end
@@ -806,10 +824,10 @@ GAME_STAGE_2:
     ; Return from function
     ret
 
-GAME_STAGE_3:
+GAME_STAGE_4:
     ;-----------------------------------------------------------
     ; Func: 
-    ; Desc: GAME_STAGE_3 = REVEAL HANDS
+    ; Desc: GAME_STAGE_4 = REVEAL HANDS
     ;-----------------------------------------------------------
     ; Save variables
     push    mpr
@@ -827,43 +845,43 @@ GAME_STAGE_3:
     ld      mpr, X
     
     cpi     mpr, 1
-    breq    GAME_STAGE_3_ROCK
+    breq    GAME_STAGE_4_ROCK
     cpi     mpr, 2
-    breq    GAME_STAGE_3_PAPER
+    breq    GAME_STAGE_4_PAPER
     cpi     mpr, 3
-    breq    GAME_STAGE_3_SCISSORS
+    breq    GAME_STAGE_4_SCISSORS
 
     ; If no compare match, branch to end
-    rjmp    GAME_STAGE_3_END
+    rjmp    GAME_STAGE_4_END
 
- GAME_STAGE_3_ROCK:
+ GAME_STAGE_4_ROCK:
     ; Print to LCD
     ldi     ZH, high(STRING_ROCK<<1)
     ldi     ZL, low(STRING_ROCK<<1)
     rcall   LCD_TOP
 
     ; Jump to end
-    rjmp    GAME_STAGE_3_END
+    rjmp    GAME_STAGE_4_END
 
- GAME_STAGE_3_PAPER:
+ GAME_STAGE_4_PAPER:
     ; Print to LCD
     ldi     ZH, high(STRING_PAPER<<1)
     ldi     ZL, low(STRING_PAPER<<1)
     rcall   LCD_TOP
 
     ; Jump to end
-    rjmp    GAME_STAGE_3_END
+    rjmp    GAME_STAGE_4_END
 
- GAME_STAGE_3_SCISSORS:
+ GAME_STAGE_4_SCISSORS:
     ; Print to LCD
     ldi     ZH, high(STRING_SCISSORS<<1)
     ldi     ZL, low(STRING_SCISSORS<<1)
     rcall   LCD_TOP
 
     ; Jump to end
-    rjmp    GAME_STAGE_3_END
+    rjmp    GAME_STAGE_4_END
 
- GAME_STAGE_3_END:
+ GAME_STAGE_4_END:
     ; Restore variables
     pop     ZL
     pop     ZH
@@ -874,10 +892,10 @@ GAME_STAGE_3:
     ; Return from function
     ret
 
-GAME_STAGE_4:
+GAME_STAGE_5:
     ;-----------------------------------------------------------
     ; Func: 
-    ; Desc: GAME_STAGE_4 = RESULT
+    ; Desc: GAME_STAGE_5 = RESULT
     ;-----------------------------------------------------------
     ; Save variables
     push    mpr
@@ -905,47 +923,47 @@ GAME_STAGE_4:
 
     ; Branch based on result
     cpi     mpr, -2
-    breq    GAME_STAGE_4_WON
+    breq    GAME_STAGE_5_WON
     cpi     mpr, 1
-    breq    GAME_STAGE_4_WON
+    breq    GAME_STAGE_5_WON
     cpi     mpr, -1
-    breq    GAME_STAGE_4_LOST
+    breq    GAME_STAGE_5_LOST
     cpi     mpr, 2
-    breq    GAME_STAGE_4_LOST
+    breq    GAME_STAGE_5_LOST
     cpi     mpr, 0
-    breq    GAME_STAGE_4_DRAW
+    breq    GAME_STAGE_5_DRAW
 
     ; If no compare match, jump to end
-    rjmp    GAME_STAGE_4_END
+    rjmp    GAME_STAGE_5_END
 
- GAME_STAGE_4_WON:
+ GAME_STAGE_5_WON:
     ; Print to LCD
     ldi     ZH, high(STRING_WON<<1)
     ldi     ZL, low(STRING_WON<<1)
     rcall   LCD_TOP
 
     ; Jump to end
-    rjmp    GAME_STAGE_4_END
+    rjmp    GAME_STAGE_5_END
 
- GAME_STAGE_4_LOST:
+ GAME_STAGE_5_LOST:
     ; Print to LCD
     ldi     ZH, high(STRING_LOST<<1)
     ldi     ZL, low(STRING_LOST<<1)
     rcall   LCD_TOP
 
     ; Jump to end
-    rjmp    GAME_STAGE_4_END
+    rjmp    GAME_STAGE_5_END
 
- GAME_STAGE_4_DRAW:
+ GAME_STAGE_5_DRAW:
     ; Print to LCD
     ldi     ZH, high(STRING_DRAW<<1)
     ldi     ZL, low(STRING_DRAW<<1)
     rcall   LCD_TOP
 
     ; Jump to end
-    rjmp    GAME_STAGE_4_END
+    rjmp    GAME_STAGE_5_END
 
- GAME_STAGE_4_END:
+ GAME_STAGE_5_END:
     ; Restore variables
     pop     ZL
     pop     ZH
@@ -969,6 +987,7 @@ STORE_HAND:
     ldi     ZH, high(HAND_OPNT)     ; mpr currently holds OPNT hand
     ldi     ZL, low(HAND_OPNT)
     st      Z, mpr                  ; Store the hand received
+    call    NEXT_GAME_STAGE         ; Advance once we receive the hand
 
     pop ZL
     pop ZH
@@ -980,7 +999,7 @@ CYCLE_HAND:
     ; Func: 
     ; Desc:
     ;-----------------------------------------------------------
- ; Save variables
+    ; Save variables
     push    mpr
     push    XH
     push    XL
