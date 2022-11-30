@@ -198,6 +198,7 @@
 
 .org    $0032                   ; USART1 Rx Complete
         rcall MESSAGE_RECEIVE
+        ;rcall  RECEIVE_TEST
         reti
 
 .org    $0034                   ; USART Data Register Empty
@@ -319,6 +320,8 @@ INIT:
 ;*  Main Program
 ;***********************************************************
 MAIN:
+        sbis    PIND, PD6
+        call    TEST_SENDER
 
         rjmp    MAIN
 
@@ -326,6 +329,23 @@ MAIN:
 ;***********************************************************
 ;*  Functions and Subroutines
 ;***********************************************************
+TEST_SENDER:
+    push  mpr
+    push  ZH
+    push  ZL
+
+    ldi     ZH, high(HAND_USER)
+    ldi     ZL, low(HAND_USER)
+    ldi     mpr, SIGNAL_SCISSORS
+    st      Z, mpr
+    call    SEND_HAND
+    call    BUSY_WAIT
+
+    pop ZL
+    pop ZH
+    pop mpr
+    ret
+
 ; Printing functions ----------------
 LCD_ALL:
     ;-----------------------------------------------------------
@@ -437,6 +457,7 @@ LCD_BOTTOM:
 
 
 ; USART -----------------------------
+; Done
 MESSAGE_RECEIVE:
     ;----------------------------------------------------------------
     ; Sub:  Message Receive
@@ -447,45 +468,27 @@ MESSAGE_RECEIVE:
     push mpr
     push ZH
     push ZL
-    push olcnt
     cli                             ; Turn interrupts off
     
     ;--------- Read message in UDR1 -----------;
     lds     mpr, UDR1               ; Read the incoming data
-    ldi     olcnt, SIGNAL_READY     ; Check to see if msg is SIGNAL_READY 
-    cpse    mpr, olcnt
-    rjmp    MR_R2                   ; Skipped if equal
-    call    RECEIVE_START           ; Go to receive start
-    rjmp    MR_R5
+    cpi     mpr, SIGNAL_READY
+    breq    MR_READY
+    call    STORE_HAND
+    rjmp    MR_END
 
- MR_R2:
-    ldi     olcnt, SIGNAL_ROCK      ; Check to see if msg is ROCK
-    cpse    mpr, olcnt
-    rjmp    MR_R3
-    call    STORE_HAND
-    rjmp    MR_R5
- MR_R3:
-    ldi     olcnt, SIGNAL_PAPER     ; Check to see if msg is PAPER
-    cpse    mpr, olcnt
-    rjmp    MR_R4
-    call    STORE_HAND
-    rjmp    MR_R5
- MR_R4:
-    ldi     olcnt, SIGNAL_PAPER     ; Check to see if msg is SCISSOR
-    cpse    mpr, olcnt
-    rjmp    MR_R5
-    call    STORE_HAND
-    rjmp    MR_R5
- MR_R5:
 
+ MR_READY:
+    call    RECEIVE_START
+ MR_END:
 
     sei                             ; Turn interrupts back on
-    pop olcnt
     pop ZL
     pop ZH
     pop mpr
     ret
 
+; Done
 READY_CHECK:
     ;----------------------------------------------------------------
     ; Sub:  Transmit Check
@@ -525,6 +528,7 @@ READY_CHECK:
     pop mpr
     ret
 
+; Done
 SEND_READY:
     ; Here we need to send a message via USART
     push mpr
@@ -558,6 +562,7 @@ SEND_READY:
     pop mpr
     ret
 
+; Done
 RECEIVE_START:
     push mpr
     push ZH
@@ -574,6 +579,7 @@ RECEIVE_START:
     pop mpr
     ret
 
+; Done
 SEND_HAND:
     push mpr
     push ZH
@@ -642,6 +648,9 @@ NEXT_GAME_STAGE:
     rjmp    NEXT_GAME_STAGE_END         ; Jump to end
 
  NEXT_GAME_STAGE_1:                     ; READY UP
+    ; Disable PD7 
+    ; Print ready message
+    ; Send ready message
     ldi     mpr, (0<<INT1)              ; Disable INT1 (PD7) because it's only use was to start the game
     out     EIMSK, mpr                  ; ^
     rcall   GAME_STAGE_1                ; Do stuff for this stage
@@ -650,6 +659,9 @@ NEXT_GAME_STAGE:
     rjmp    NEXT_GAME_STAGE_END         ; Jump to end
     
  NEXT_GAME_STAGE_2:                     ; CHOOSE HAND
+    ; Display user hand on bottom row
+    ; Starts the timer
+    ; Enables PD4
     rcall   GAME_STAGE_2                ; Do stuff for this stage
     ldi     mpr, 3                      ; Update GAME_STAGE
     st      X, mpr                      ; ^
@@ -658,6 +670,9 @@ NEXT_GAME_STAGE:
     rjmp    NEXT_GAME_STAGE_END         ; Jump to end
 
  NEXT_GAME_STAGE_3:
+    ; Disable PD4
+    ; Send user's hand
+    ; wait for recieve
     ldi     mpr, (0<<INT0)              ; Disable INT0 so hand cannot be changed
     out     EIMSK, mpr                  ; ^
     ; Send user hand to USART
@@ -987,12 +1002,70 @@ STORE_HAND:
     ldi     ZH, high(HAND_OPNT)     ; mpr currently holds OPNT hand
     ldi     ZL, low(HAND_OPNT)
     st      Z, mpr                  ; Store the hand received
-    call    NEXT_GAME_STAGE         ; Advance once we receive the hand
 
     pop ZL
     pop ZH
     pop mpr
     ret 
+
+PRINT_HAND:
+    push mpr
+    push XH
+    push XL
+    push ZH
+    push ZL
+
+
+    ; Branch based on Opponent Hand
+    ldi     XH, high(HAND_OPNT)
+    ldi     XL, low(HAND_OPNT)
+    ld      mpr, X
+    
+    cpi     mpr, 1
+    breq    RECEIVE_TEST_ROCK
+    cpi     mpr, 2
+    breq    RECEIVE_TEST_PAPER
+    cpi     mpr, 3
+    breq    RECEIVE_TEST_SCISSORS
+
+    ; If no compare match, branch to end
+    rjmp    RECEIVE_TEST_END
+
+ RECEIVE_TEST_ROCK:
+    ; Print to LCD
+    ldi     ZH, high(STRING_ROCK<<1)
+    ldi     ZL, low(STRING_ROCK<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    RECEIVE_TEST_END
+
+ RECEIVE_TEST_PAPER:
+    ; Print to LCD
+    ldi     ZH, high(STRING_PAPER<<1)
+    ldi     ZL, low(STRING_PAPER<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    RECEIVE_TEST_END
+
+ RECEIVE_TEST_SCISSORS:
+    ; Print to LCD
+    ldi     ZH, high(STRING_SCISSORS<<1)
+    ldi     ZL, low(STRING_SCISSORS<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    RECEIVE_TEST_END
+
+ RECEIVE_TEST_END:
+    ; Restore variables
+    pop     ZL
+    pop     ZH
+    pop     XL
+    pop     XH
+    pop     mpr
+    ret
 
 CYCLE_HAND:
     ;-----------------------------------------------------------
