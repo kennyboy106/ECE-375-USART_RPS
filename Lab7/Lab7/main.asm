@@ -862,11 +862,74 @@ STORE_HAND:
     ldi     ZH, high(HAND_OPNT)     ; mpr currently holds OPNT hand
     ldi     ZL, low(HAND_OPNT)
     st      Z, mpr                  ; Store the hand received
+    call    PRINT_HAND
 
     pop ZL
     pop ZH
     pop mpr
     ret 
+
+PRINT_HAND:
+    ;-----------------------------------------------------------
+    ; Func: Print hand
+    ; Desc: Prints the opponent's hand on the top row of the LCD
+    ;-----------------------------------------------------------
+    push mpr
+    push XH
+    push XL
+    push ZH
+    push ZL
+
+    ; Branch based on Opponent Hand
+    ldi     XH, high(HAND_OPNT)
+    ldi     XL, low(HAND_OPNT)
+    ld      mpr, X
+    
+    cpi     mpr, 1
+    breq    PRINT_HAND_ROCK
+    cpi     mpr, 2
+    breq    PRINT_HAND_PAPER
+    cpi     mpr, 3
+    breq    PRINT_HAND_SCISSORS
+
+    ; If no compare match, branch to end
+    rjmp    PRINT_HAND_END
+
+ PRINT_HAND_ROCK:
+    ; Print to LCD
+    ldi     ZH, high(STRING_ROCK<<1)
+    ldi     ZL, low(STRING_ROCK<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    PRINT_HAND_END
+
+ PRINT_HAND_PAPER:
+    ; Print to LCD
+    ldi     ZH, high(STRING_PAPER<<1)
+    ldi     ZL, low(STRING_PAPER<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    PRINT_HAND_END
+
+ PRINT_HAND_SCISSORS:
+    ; Print to LCD
+    ldi     ZH, high(STRING_SCISSORS<<1)
+    ldi     ZL, low(STRING_SCISSORS<<1)
+    rcall   LCD_TOP
+
+    ; Jump to end
+    rjmp    PRINT_HAND_END
+
+ PRINT_HAND_END:
+    ; Restore variables
+    pop     ZL
+    pop     ZH
+    pop     XL
+    pop     XH
+    pop     mpr
+    ret
 
 CYCLE_HAND:
     ;-----------------------------------------------------------
@@ -1128,4 +1191,3 @@ READY_USER:         ; User ready
 ;*  Additional Program Includes
 ;***********************************************************
 .include "LCDDriver.asm"
-
